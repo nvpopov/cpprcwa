@@ -48,6 +48,9 @@ cpprcwa/
 │   ├── ex_euv_multilayer.cpp   # EUV Mo/Si multilayer mirror (Ru cap) reflectivity
 │   ├── ex_euv_absorber.cpp     # EUV TaN absorber pattern on top of the mirror
 │   └── ex_quasi1d_absorber.cpp # Quasi-1D line grating (500 nm TaN bar, Lx=3.5 um)
+├── python/
+│   ├── cpprcwa_bind.cpp       # nanobind bindings (grcwa-compatible obj + helpers)
+│   └── grcwa/__init__.py      # drop-in shim: import grcwa → cpprcwa
 ├── benchmarks/
 │   └── bench_full_rt.cpp       # End-to-end RT_Solve timing
 └── scripts/
@@ -673,6 +676,35 @@ continuous boundary medium, which is violated by alternating-material stacks
 giving a small (~4e-4) reflectivity error. Making it correct requires
 accounting for inter-period interfaces in the recombination; left as future
 work.
+
+### 7.5 Python bindings (nanobind) — grcwa drop-in
+
+`CPPRCWA_BUILD_PYTHON=ON` (default) builds a nanobind module
+(`cpprcwa.cpython-*.so`) plus a `grcwa/` shim package in the build directory.
+
+- **`obj` class** mirrors `grcwa.obj` 1:1: constructor
+  `(nG, L1, L2, freq, theta, phi, verbose=1, quasi1d=False)` (L1/L2 accept
+  Python lists), `Add_LayerUniform/Grid/Fourier`, `Init_Setup`,
+  `GridLayer_geteps` (isotropic; anisotropic → `NotImplementedError`),
+  `MakeExcitationPlanewave`, `RT_Solve`, `GetAmplitudes(_noTranslate)`,
+  `Solve_FieldFourier/OnGrid`, `Return_eps`, `Volume_integral`,
+  `Solve_ZStressTensorIntegral`, and read attributes
+  `nG, Layer_N, G, kx, ky, q_list, phi_list, kp_list, thickness_list,
+  Uniform_ep_list, GridLayer_Nxy_list, Patterned_epinv_list,
+  Patterned_ep2_list, freq, omega, L1, L2, theta, phi, a0, bN, direction,
+  normalization, id_list`.
+- **Module helpers**: `Lattice_Reciprocate`, `Lattice_getG`, `Lattice_SetKs`,
+  `get_fft`, `get_ifft`, `Epsilon_fft`.
+- **Validation**: grcwa's own `ex1.py` (nG=301, R=0.13241493181686462),
+  `ex2.py` (oblique, 2 patterned layers, R=0.1325989361682126) and `ex4.py`
+  (hexagonal, R=0.16445003997328628) run unchanged via the shim and match the
+  original grcwa to ~1e-13. `quasi1d=True` on `obj` exposes the fast path
+  (nG=201→113, R=0.528927) from Python.
+- **Implementation notes**: constructor uses `nb::pointer_and_handle` +
+  placement-new (nanobind `init<>` can't convert list→Eigen/numpy and has no
+  convert flag for init args); member lambdas take `RCWA&` explicitly;
+  Eigen/matrix returns are passed by value to avoid lifetime issues; the
+  `std::complex<double>` caster requires `<nanobind/stl/complex.h>`.
 
 ---
 

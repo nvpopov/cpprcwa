@@ -13,6 +13,7 @@ option(CPPRCWA_BUILD_TESTS    "Build cpprcwa unit tests"    ON)
 option(CPPRCWA_BUILD_EXAMPLES "Build cpprcwa examples"      ON)
 option(CPPRCWA_BUILD_BENCHMARKS "Build cpprcwa benchmarks"  OFF)
 option(CPPRCWA_USE_CUDA      "Enable CUDA GPU backend"      OFF)
+option(CPPRCWA_BUILD_PYTHON  "Build Python bindings (nanobind)" ON)
 
 # ── Release optimization ────────────────────────────────────────────────────
 # Explicit, tuned compiler flags on top of CMake's -O3. All are scoped to the
@@ -52,8 +53,12 @@ endif()
 
 find_package(FFTW3 REQUIRED)
 
-find_package(LAPACK REQUIRED)
+# Prefer OpenBLAS: it provides both BLAS and LAPACK and avoids incomplete
+# Intel MKL installs (which can fail at runtime). Override with
+#   -DBLA_VENDOR=Generic   (or any CMake FindBLAS vendor)
+set(BLA_VENDOR "OpenBLAS" CACHE STRING "BLAS/LAPACK vendor to use")
 find_package(BLAS REQUIRED)
+find_package(LAPACK REQUIRED)
 
 # ── Core library ───────────────────────────────────────────────────────────
 add_library(cpprcwa STATIC
@@ -84,11 +89,30 @@ target_link_libraries(cpprcwa
 )
 
 target_compile_features(cpprcwa PUBLIC cxx_std_17)
+# PIC so the static lib can be linked into the Python module (.so).
+set_target_properties(cpprcwa PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # Use BLAS (zgemm) for Eigen matrix products instead of Eigen's internal
 # single-threaded kernels — a large win for the S-matrix star product.
 target_compile_definitions(cpprcwa PRIVATE EIGEN_USE_BLAS)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(cpprcwa PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# ── Python bindings (nanobind) ──────────────────────────────────────────────
+if(CPPRCWA_BUILD_PYTHON)
+    find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+    find_package(nanobind CONFIG REQUIRED)
+    nanobind_add_module(cpprcwa_py python/cpprcwa_bind.cpp)
+    set_target_properties(cpprcwa_py PROPERTIES OUTPUT_NAME cpprcwa)
+    target_link_libraries(cpprcwa_py PRIVATE cpprcwa::cpprcwa)
+    target_include_directories(cpprcwa_py PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    # `grcwa` drop-in shim package (imports cpprcwa) next to the module.
+    file(COPY python/grcwa DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+    if(SKBUILD)
+        # scikit-build-core wheel layout: module at the wheel root, shim in grcwa/.
+        install(TARGETS cpprcwa_py LIBRARY DESTINATION .)
+        install(FILES python/grcwa/__init__.py DESTINATION grcwa/)
+    endif()
 endif()
 
 # ── Subdirectories ─────────────────────────────────────────────────────────

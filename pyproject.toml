@@ -1,0 +1,34 @@
+[build-system]
+requires = ["scikit-build-core>=0.8", "nanobind>=2.0", "cmake>=3.18"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "cpprcwa"
+version = "0.1.0"
+description = "High-performance C++ rigorous coupled-wave analysis (RCWA); drop-in replacement for grcwa"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "GPL-3.0-or-later" }
+keywords = ["RCWA", "rigorous coupled wave analysis", "nanophotonics", "grcwa"]
+classifiers = [
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Physics",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+]
+dependencies = ["numpy"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.scikit-build]
+cmake.build-type = "Release"
+cmake.args = ["-DCPPRCWA_BUILD_TESTS=OFF", "-DCPPRCWA_BUILD_EXAMPLES=OFF"]
+wheel.install-dir = "."
+sdist.include = [
+    "CMakeLists.txt",
+    "cmake/*",
+    "include/*",
+    "src/*",
+    "python/*",
+]

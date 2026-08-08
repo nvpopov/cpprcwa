@@ -20,6 +20,13 @@ RCWA::RCWA(const RCWAConfig& config)
       phi_(config.phi),
       quasi1d_(config.quasi1d) {}
 
+RCWA::RCWA(int nG, const std::vector<double>& L1,
+           const std::vector<double>& L2, complex freq, double theta,
+           double phi, int verbose, bool quasi1d)
+    : RCWA(RCWAConfig{nG, Eigen::Vector2d(L1[0], L1[1]),
+                      Eigen::Vector2d(L2[0], L2[1]), freq, theta, phi,
+                      verbose, quasi1d}) {}
+
 RCWA::~RCWA() = default;
 
 void RCWA::Add_LayerUniform(double thickness, complex epsilon) {

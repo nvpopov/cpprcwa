@@ -16,6 +16,9 @@ of scope.
 - Validated against grcwa / S4: reproduces the S4 golden reference
   `T=0.85249901083265` (p-pol) and `T=0.83900479939861` (s-pol) within `1e-3`
   relative tolerance, and matches grcwa's `ex1.py`, `ex2.py`, `ex4.py` exactly.
+- Python bindings (nanobind) expose the grcwa `obj` API as a drop-in
+  replacement — grcwa's own `ex1.py` / `ex2.py` / `ex4.py` run unchanged via
+  `import grcwa` (shim) or `import cpprcwa`, with machine-precision agreement.
 
 ## Requirements
 
@@ -25,6 +28,7 @@ of scope.
 - [FFTW3](https://www.fftw.org) 3.3.x (`libfftw3-dev`)
 - BLAS + LAPACK (OpenBLAS recommended)
 - Catch2 v3 (for tests; system package or FetchContent fallback)
+- Python 3 + nanobind + numpy (for the Python bindings; `CPPRCWA_BUILD_PYTHON`)
 
 ## Build
 
@@ -32,6 +36,12 @@ of scope.
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ctest --test-dir build --output-on-failure
+```
+
+Or install the Python bindings as a package (scikit-build-core + nanobind):
+
+```bash
+pip install .
 ```
 
 Options:
@@ -45,12 +55,34 @@ Options:
 | `CPPRCWA_USE_NATIVE` | `ON` | Release: `-march=native -mtune=native` (CPU-specific SIMD) |
 | `CPPRCWA_USE_LTO` | `ON` | Release: `-flto` (link-time optimization) |
 | `CPPRCWA_USE_FASTMATH` | `OFF` | Release: `-ffast-math` (opt-in; alters FP rounding) |
+| `CPPRCWA_BUILD_PYTHON` | `ON` | Python bindings (nanobind) |
 
 Release builds also add `-funroll-loops -fno-math-errno -ffp-contract=fast`
 (GCC/Clang). The heavy `zgemm`/`zgeev` work runs in prebuilt OpenBLAS/LAPACK,
 so these flags mainly speed up the surrounding C++ scalar code (~5–10%
 wall-clock); they are verified to leave R and the grcwa field agreement at
 machine precision.
+
+## Python bindings (grcwa drop-in)
+
+When `CPPRCWA_BUILD_PYTHON=ON`, the build produces `cpprcwa.cpython-*.so`
+plus a `grcwa/` shim package in the build directory. Use it in place of
+grcwa:
+
+```bash
+PYTHONPATH=<build-dir> python3 your_script.py     # import cpprcwa
+PYTHONPATH=<build-dir> python3 grcwa_script.py    # import grcwa (shim)
+```
+
+The `obj` class mirrors `grcwa.obj` (constructor `(nG, L1, L2, freq, theta,
+phi, verbose=1, quasi1d=False)`, `Add_Layer*`, `Init_Setup`,
+`GridLayer_geteps`, `MakeExcitationPlanewave`, `RT_Solve`, `GetAmplitudes`,
+`Solve_FieldFourier/OnGrid`, `Return_eps`, `Volume_integral`,
+`Solve_ZStressTensorIntegral`, and the `G/kx/ky/q_list/...` attributes).
+Module-level `Lattice_*`, `get_fft`, `get_ifft`, `Epsilon_fft` are exported
+too. grcwa's own `ex1.py`, `ex2.py`, `ex4.py` run unchanged and match the
+original to machine precision. Anisotropic `GridLayer_geteps` and
+`Add_LayerFourier` are not implemented (raise `NotImplementedError`).
 
 ## Performance notes
 

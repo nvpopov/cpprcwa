@@ -13,6 +13,11 @@ namespace cpprcwa {
 class RCWA {
 public:
     explicit RCWA(const RCWAConfig& config);
+
+    // Convenience constructor (used by the Python bindings).
+    RCWA(int nG, const std::vector<double>& L1,
+         const std::vector<double>& L2, complex freq, double theta,
+         double phi, int verbose = 1, bool quasi1d = false);
     ~RCWA();
 
     RCWA(const RCWA&) = delete;
@@ -93,6 +98,28 @@ public:
     double normalization() const { return normalization_; }
     const std::vector<ComplexMatrix>& patterned_epinv_list() const { return patterned_epinv_; }
     const std::vector<ComplexMatrix>& patterned_ep2_list() const { return patterned_ep2_; }
+
+    // ── Additional accessors (Python bindings / grcwa attribute parity) ──
+    complex freq() const { return freq_; }
+    complex omega() const { return omega_; }
+    const Eigen::Vector2d& L1() const { return L1_; }
+    const Eigen::Vector2d& L2() const { return L2_; }
+    double theta() const { return theta_; }
+    double phi() const { return phi_; }
+    bool quasi1d() const { return quasi1d_; }
+    const std::vector<complex>& uniform_eps_list() const { return uniform_eps_; }
+    const std::vector<std::pair<int,int>>& grid_Nxy_list() const { return grid_Nxy_; }
+    const std::vector<LayerType>& layer_types() const { return layer_types_; }
+    const std::vector<int>& material_idx() const { return material_idx_; }
+    const std::vector<int>& grid_idx() const { return grid_idx_; }
+    const ComplexVector& a0() const { return a0_; }
+    const ComplexVector& bN() const { return bN_; }
+    Direction direction() const { return direction_; }
+    int patterned_count() const { return patterned_count_; }
+    // 'forward' / 'backward'
+    const char* direction_str() const {
+        return direction_ == Direction::Forward ? "forward" : "backward";
+    }
 
 private:
     // ── Configuration & problem ──

@@ -60,7 +60,7 @@ tolerance and matches grcwa's `ex1.py`/`ex2.py`/`ex4.py` to printed precision.
 | 7 Post-processing | ✅ | `Volume_integral`, stress tensor (matches grcwa) |
 | 8 Examples | ✅ | `ex1`/`ex2`/`ex4` ports + golden scripts + EUV multilayer mirror + EUV absorber + reflected-field validation & plotting + quasi-1D line grating |
 | 9 GPU | ⛔ | Deferred (not started) |
-| 10 Polish | ✅ | README, install target; OpenMP/pybind11 deferred |
+| 10 Polish | ✅ | README, install target; Python bindings (nanobind, grcwa drop-in) done; OpenMP/pybind11 deferred |
 
 **Notable bugs found and fixed during the port:**
 - Uninitialized Eigen matrices (`Jk`, `k_mat`) — off-diagonal garbage polluted
