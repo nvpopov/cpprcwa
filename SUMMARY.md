@@ -45,7 +45,8 @@ cpprcwa/
 │   ├── ex1_square_lattice.cpp  # Square lattice of holes (port of ex1.py)
 │   ├── ex2_two_layers.cpp      # Two patterned layers, oblique incidence (ex2.py)
 │   ├── ex4_hexagonal.cpp       # Hexagonal lattice, non-orthogonal coords (ex4.py)
-│   └── ex_euv_multilayer.cpp   # EUV Mo/Si multilayer mirror (Ru cap) reflectivity
+│   ├── ex_euv_multilayer.cpp   # EUV Mo/Si multilayer mirror (Ru cap) reflectivity
+│   └── ex_euv_absorber.cpp     # EUV TaN absorber pattern on top of the mirror
 ├── benchmarks/
 │   └── bench_full_rt.cpp       # End-to-end RT_Solve timing
 └── scripts/
@@ -397,6 +398,13 @@ The `fey = −fexy[:nG]` sign is **intentional** (amplitude-vector ordering maps
 `Solve_FieldFourier`, then `get_ifft` each of the six components to an
 `(Nx, Ny)` `GridMatrix`. `Nxy` defaults to the layer's stored grid size.
 
+**`ForwardPropagatedFieldFourier(which_layer, z_offset)`** /
+**`BackwardPropagatedFieldFourier(which_layer, z_offset)`** — field
+contribution from the forward (`ai`) or backward (`bi`) amplitudes alone,
+evaluated in `which_layer` at depth `z_offset` (0 = front interface). For
+layer 0 at z=0, `BackwardPropagatedFieldFourier` is the reflected field in
+air; used to validate every reflected order against grcwa.
+
 ### 5.6 Post-processing
 
 **`Return_eps(which_layer, Nx, Ny, component)`**
@@ -468,6 +476,9 @@ All validated against grcwa (Python) / S4:
 | ex4 (hexagonal) `R,T` | 0.164450, 0.835550 | 0.16445004, 0.83554996 | ✓ |
 | EUV mirror @13.5 nm `R` | 0.599171 | 0.599171 | exact ✓ |
 | EUV mirror @13.7 nm `R` | 0.647593 | 0.647593 | exact ✓ |
+| EUV absorber @13.5 nm `R` (nG=97) | 0.578790 | 0.578790 | exact ✓ |
+| EUV absorber @13.5 nm `R` (nG=9) | 0.566750 | 0.566750 | exact ✓ |
+| EUV absorber @13.5 nm, θ=6° `R` (nG=9) | 0.587072 | 0.587072 | exact ✓ |
 | `FieldFourier` component norms | §test_rcwa | exact to ~1e-12 | ✓ |
 | `Volume_integral(real(epinv))` | 0.196376 | 0.196392 | ~8e-5 rel ✓ |
 | `Solve_ZStressTensorIntegral(0)` | −0.139217, −0.050671, −1.09948 | identical | ✓ |
@@ -495,6 +506,77 @@ multilayer mirror (validated against grcwa via `scripts/compare_euv.py`):
   (`--scan`) shows the Bragg peak at ≈13.7 nm (R = 0.647593) because the
   geometric period of 7.0 nm combined with these optical constants peaks
   slightly above the 13.5 nm design wavelength.
+
+### 7.2 EUV absorber-on-mirror example
+
+`examples/ex_euv_absorber.cpp` adds a periodic TaN absorber pattern on top of
+the mirror (EUV mask geometry), validated against grcwa via
+`scripts/compare_euv.py --absorber`:
+
+- **Stack**: vacuum / **TaN absorber pattern** (300 nm cell, 60×60 nm
+  rectangle, `n = 0.9562+0.0323i`, height 60 nm) / Ru cap 2.5 nm /
+  40× Mo/Si bilayers / Si substrate.
+- **Patterned layer**: `Add_LayerGrid(abs_t, Nx, Ny)`; the grid is 1 for
+  vacuum and `n_tan²` inside the rectangle; all other (isotropic) machinery
+  (FFT convolution → `Epsilon_fft` → non-Hermitian `zgeev`) applies.
+- **Truncation / resolution**: `nG` is a CLI argument (default 101 → `nG_out
+  = 97`), grid `Nx×Ny` defaults to 300 (1 nm pixels). Convergence: R = 0.5668
+  (nG=9), 0.5788 (nG=97), 0.5791 (nG=197) — ~0.06% converged at nG≈100.
+- **Result**: R = 0.578790 at 13.5 nm (grcwa-identical), vs 0.599171 for the
+  bare mirror — the TaN absorber (4% areal fill) absorbs/scatters ~2% of the
+  incident power.
+
+#### Reflected-field validation (air side) & visualization
+
+`ex_euv_absorber --field OUT` writes the reflected field in the incident
+medium (backward-only, z=0): per-order Fourier coefficients (`OUT_orders.txt`),
+the real-space `|E|²` grid (`OUT_grid.txt`), horizontal / vertical
+cross-sections of `|E|²` through the cell center (`OUT_hscan.txt`,
+`OUT_vscan.txt`), and the full complex field `Re/Im (Ex, Ey, Ez)` along both
+cross-section lines (`OUT_hfield.txt`, `OUT_vfield.txt`).
+`scripts/plot_reflected_field.py` reproduces the same in grcwa, compares all
+orders, renders `OUT_plot.png` (2D `|E|²` map + `|E|²` cross-sections) and
+`OUT_crossections.png` (Re/Im of Ex, Ey, Ez along the horizontal and vertical
+cross-sections, cpprcwa vs grcwa), and reports a wall-clock performance
+comparison (cpprcwa timing from `OUT_perf.txt`, grcwa timed internally).
+
+For the nG=9 fast config both agree with grcwa to **machine precision**:
+
+| quantity | max |cpp − grcwa| |
+|---|---|---|
+| per-order reflected coefficients (ex, ey, ez, all orders) | 1.6e-14 |
+| real-space `|E|²` grid | 3.4e-14 |
+| Ex, Ey, Ez along both cross-section lines | 2–4e-14 |
+
+The specular order (G=0) dominates; scattered orders (G=(±1,0), (0,±1), …)
+carry the diffraction from the 60 nm TaN rectangle. The real-space map shows
+|E|² ≈ 0.74 in open areas, dipping to ≈ 0.39 over the absorber, with
+symmetric horizontal/vertical cross-sections through the center.
+
+An **oblique-incidence variant** (θ = 6°) is covered by a dedicated test
+(`RCWA EUV absorber on mirror oblique incidence`): R = 0.587072 matches grcwa
+exactly, and the reflected specular + scattered orders (matched per G-vector)
+agree to machine precision.
+
+### 7.3 Performance vs grcwa (EUV absorber)
+
+The library builds with `EIGEN_USE_BLAS` (matrix products via OpenBLAS
+`zgemm` instead of Eigen's single-threaded kernels) and FFTW plans use
+`FFTW_ESTIMATE` (fast planning; the plan cache amortizes it across solves).
+`ex_euv_absorber` caps OpenBLAS at `min(cores, 6)` threads at runtime — with
+more threads the small `2nG×2nG` S-matrix blocks suffer thread-pool overhead
+(measured: 12 threads ≈ 4.9 s vs 6 threads ≈ 1.3 s for the nG=97 solve).
+
+Wall-clock (whole pipeline: build + setup + solve), single run:
+
+| config | cpprcwa | grcwa | speedup |
+|---|---|---|---|
+| nG=9, 100×100 | 31 ms | 105 ms | 3.4× |
+| nG=97, 200×200 | 2.4 s | 6.0 s | 2.5× |
+
+Numerical agreement is unchanged (all orders / real-space field match grcwa
+to ~1e-14). For the nG=97 case, the non-Hermitian `zgeev` of the 194×194
+patterned-layer matrix dominates the setup (~360 ms).
 
 ---
 

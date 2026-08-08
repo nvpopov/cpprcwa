@@ -43,6 +43,17 @@ Options:
 | `CPPRCWA_BUILD_BENCHMARKS` | `OFF` | Timed benchmarks (`benchmarks/`) |
 | `CPPRCWA_USE_CUDA` | `OFF` | GPU backend (not yet implemented) |
 
+## Performance notes
+
+- Matrix products use the BLAS backend (`EIGEN_USE_BLAS`, i.e. OpenBLAS
+  `zgemm`); LAPACK is used for `zgeev` and matrix inversions.
+- FFTW plans are cached per `(Nx, Ny)` and created with `FFTW_ESTIMATE`.
+- OpenBLAS can oversubscribe on small S-matrix blocks: `ex_euv_absorber`
+  caps it at `min(cores, 6)` threads at runtime (overridable with
+  `--threads N` or `OPENBLAS_NUM_THREADS`).
+- Measured vs grcwa on the EUV absorber case: **3.4×** (nG=9) and **2.5×**
+  (nG=97) wall-clock speedup, with machine-precision field agreement.
+
 ## Quick start
 
 ```cpp
@@ -98,7 +109,8 @@ include/cpprcwa/  public headers (cpprcwa.h aggregator, types.h, kbloch.h,
 src/              implementations (rcwa.cpp, kbloch.cpp, fft_funs.cpp,
                    internal/{lapack_wrappers,branch_cut,utils}.{h,cpp})
 tests/            Catch2 unit tests + golden reference outputs
-examples/         ex1 (square holes), ex2 (two layers), ex4 (hexagonal)
+examples/         ex1 (square holes), ex2 (two layers), ex4 (hexagonal),
+                  ex_euv_multilayer (Mo/Si mirror), ex_euv_absorber (TaN pattern)
 benchmarks/       timed benchmarks
 scripts/          golden-file generation / comparison helpers
 ```

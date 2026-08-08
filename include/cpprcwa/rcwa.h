@@ -70,6 +70,15 @@ public:
     // Maxwell stress tensor integral → (2Fx, 2Fy, 2Fz)
     std::array<double, 3> Solve_ZStressTensorIntegral(int which_layer);
 
+    // Field contribution from the forward-propagating (ai) amplitudes alone,
+    // evaluated in `which_layer` at depth `z_offset` (0 = front interface).
+    FieldFourier ForwardPropagatedFieldFourier(int which_layer, double z_offset);
+
+    // Field contribution from the backward-propagating (bi) amplitudes alone,
+    // evaluated in `which_layer` at depth `z_offset` (0 = front interface).
+    // For layer 0 at z=0 this is the reflected field in air.
+    FieldFourier BackwardPropagatedFieldFourier(int which_layer, double z_offset);
+
     // ── Accessors ──
     int nG() const { return nG_; }
     int Layer_N() const { return static_cast<int>(layer_types_.size()); }
@@ -147,6 +156,12 @@ private:
     static void TranslateAmplitudes(const ComplexVector& q, double thickness, double dz,
                                     const ComplexVector& ai, const ComplexVector& bi,
                                     ComplexVector& aim, ComplexVector& bim);
+
+    // Field Fourier coefficients in `which_layer` from arbitrary (untranslated)
+    // amplitudes ai, bi (rcwa.py Solve_FieldFourier body).
+    FieldFourier field_from_amplitudes(int which_layer,
+                                       const ComplexVector& ai,
+                                       const ComplexVector& bi) const;
 };
 
 } // namespace cpprcwa

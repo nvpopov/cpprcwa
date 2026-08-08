@@ -347,47 +347,56 @@ RCWA::GetAmplitudes(int which_layer, double z_offset) {
     return {aim, bim};
 }
 
+FieldFourier
+RCWA::field_from_amplitudes(int which_layer,
+                            const ComplexVector& ai,
+                            const ComplexVector& bi) const {
+    // rcwa.py Solve_FieldFourier body (282-319)
+    const ComplexVector& q = q_list_[which_layer];
+    bool is_uniform = (layer_types_[which_layer] == LayerType::Uniform);
+
+    // hx, hy in Fourier space
+    ComplexVector fhxy = phi_list_[which_layer] * (ai + bi);
+    ComplexVector fhx = fhxy.head(nG_);
+    ComplexVector fhy = fhxy.tail(nG_);
+
+    // ex, ey in Fourier space (fey = -fexy[:nG], fex = fexy[nG:])
+    ComplexVector tmp1 = (ai - bi).cwiseQuotient((omega_ * q.array()).matrix());
+    ComplexVector tmp2 = phi_list_[which_layer] * tmp1;
+    ComplexVector fexy = kp_list_[which_layer] * tmp2;
+    ComplexVector fey = -fexy.head(nG_);
+    ComplexVector fex = fexy.tail(nG_);
+
+    // hz
+    ComplexVector fhz = (kx_.cwiseProduct(fey) - ky_.cwiseProduct(fex)) / omega_;
+
+    // ez
+    ComplexVector fez = (ky_.cwiseProduct(fhx) - kx_.cwiseProduct(fhy)) / omega_;
+    if (is_uniform) {
+        fez /= uniform_eps_[material_idx_[which_layer]];
+    } else {
+        fez = patterned_epinv_[material_idx_[which_layer]] * fez;
+    }
+
+    FieldFourier f;
+    f.ex = fex; f.ey = fey; f.ez = fez;
+    f.hx = fhx; f.hy = fhy; f.hz = fhz;
+    return f;
+}
+
 std::vector<FieldFourier>
 RCWA::Solve_FieldFourier(int which_layer, const std::vector<double>& z_offsets) {
     // rcwa.py:282-319
     auto [ai0, bi0] = GetAmplitudes_noTranslate(which_layer);
     const ComplexVector& q = q_list_[which_layer];
     double thickness = thickness_[which_layer];
-    bool is_uniform = (layer_types_[which_layer] == LayerType::Uniform);
 
     std::vector<FieldFourier> out;
     out.reserve(z_offsets.size());
     for (double zoff : z_offsets) {
         ComplexVector aim, bim;
         TranslateAmplitudes(q, thickness, zoff, ai0, bi0, aim, bim);
-
-        // hx, hy in Fourier space
-        ComplexVector fhxy = phi_list_[which_layer] * (aim + bim);
-        ComplexVector fhx = fhxy.head(nG_);
-        ComplexVector fhy = fhxy.tail(nG_);
-
-        // ex, ey in Fourier space (fey = -fexy[:nG], fex = fexy[nG:])
-        ComplexVector tmp1 = (aim - bim).cwiseQuotient((omega_ * q.array()).matrix());
-        ComplexVector tmp2 = phi_list_[which_layer] * tmp1;
-        ComplexVector fexy = kp_list_[which_layer] * tmp2;
-        ComplexVector fey = -fexy.head(nG_);
-        ComplexVector fex = fexy.tail(nG_);
-
-        // hz
-        ComplexVector fhz = (kx_.cwiseProduct(fey) - ky_.cwiseProduct(fex)) / omega_;
-
-        // ez
-        ComplexVector fez = (ky_.cwiseProduct(fhx) - kx_.cwiseProduct(fhy)) / omega_;
-        if (is_uniform) {
-            fez /= uniform_eps_[material_idx_[which_layer]];
-        } else {
-            fez = patterned_epinv_[material_idx_[which_layer]] * fez;
-        }
-
-        FieldFourier f;
-        f.ex = fex; f.ey = fey; f.ez = fez;
-        f.hx = fhx; f.hy = fhy; f.hz = fhz;
-        out.push_back(std::move(f));
+        out.push_back(field_from_amplitudes(which_layer, aim, bim));
     }
     return out;
 }
@@ -431,6 +440,25 @@ std::vector<FieldGrid>
 RCWA::Solve_FieldOnGrid(int which_layer, double z_offset,
                         std::optional<std::array<int,2>> Nxy) {
     return Solve_FieldOnGrid(which_layer, std::vector<double>{z_offset}, Nxy);
+}
+
+FieldFourier RCWA::ForwardPropagatedFieldFourier(int which_layer, double z_offset) {
+    // Field from the forward amplitudes ai alone (bi = 0), at depth z_offset.
+    auto [ai, bi] = GetAmplitudes_noTranslate(which_layer);
+    ComplexVector aim, bim;
+    TranslateAmplitudes(q_list_[which_layer], thickness_[which_layer], z_offset,
+                        ai, bi, aim, bim);
+    return field_from_amplitudes(which_layer, aim, ComplexVector::Zero(2 * nG_));
+}
+
+FieldFourier RCWA::BackwardPropagatedFieldFourier(int which_layer, double z_offset) {
+    // Field from the backward amplitudes bi alone (ai = 0), at depth z_offset.
+    // Layer 0 at z=0 → the reflected field in air.
+    auto [ai, bi] = GetAmplitudes_noTranslate(which_layer);
+    ComplexVector aim, bim;
+    TranslateAmplitudes(q_list_[which_layer], thickness_[which_layer], z_offset,
+                        ai, bi, aim, bim);
+    return field_from_amplitudes(which_layer, ComplexVector::Zero(2 * nG_), bim);
 }
 
 GridMatrix RCWA::Return_eps(int which_layer, int Nx, int Ny, const std::string& component) {

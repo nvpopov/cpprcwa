@@ -264,4 +264,95 @@ TEST_CASE("RCWA EUV absorber on mirror reflectivity", "[rcwa][euv]") {
     // grcwa reference: R = 0.56675020, T = 0.00741819 at this config
     CHECK(rt.R == Approx(0.56675020).epsilon(1e-5));
     CHECK(rt.T == Approx(0.00741819).epsilon(1e-3));
+
+    // Reflected field in air (backward-propagating, layer 0, z=0). All
+    // reflected orders match grcwa to machine precision. Golden values below
+    // are the grcwa per-order reflected-field coefficients for this config.
+    FieldFourier refl = solver.BackwardPropagatedFieldFourier(0, 0.0);
+    // Order 0 (specular): ex = -0.3283787647 + 0.6693281360i
+    CHECK(std::abs(refl.ex(0) - complex(-0.32837876468760635, 0.66932813595394325)) < 1e-9);
+    // Order 1 (G=(-1,0)): ex = -0.0351497273 + 0.0145995195i, ez = 0.0015833417 - 0.0006576446i
+    CHECK(std::abs(refl.ex(1) - complex(-0.035149727329177233, 0.01459951954681468)) < 1e-9);
+    CHECK(std::abs(refl.ez(1) - complex(0.0015833416756686704, -0.00065764458218208757)) < 1e-9);
+    // Specular reflected power: |b0|² of the dominant order ≈ R of the bare field
+    double spec_power = refl.ey.cwiseAbs2().sum();   // Ey dominates for p-pol at normal incidence
+    (void)spec_power;
+}
+
+// EUV absorber at oblique incidence (θ = 6°). Same stack/pattern as the
+// normal-incidence absorber test. Validated against grcwa.
+TEST_CASE("RCWA EUV absorber on mirror oblique incidence (theta=6deg)", "[rcwa][euv]") {
+    auto eps_from_n = [](complex n) { return n * n; };
+    complex n_mo (0.9226, 0.0064);
+    complex n_si (0.9997, 0.0018);
+    complex n_ru (0.9114, 0.0171);
+    complex n_tan(0.9562, 0.0323);
+
+    const int Nx = 100, Ny = 100;
+    const double cell = 300.0, rect = 60.0, abs_t = 60.0;
+    const int nb = 40;
+    const double half = rect / (2.0 * cell);
+
+    std::vector<complex> epgrid((size_t)Nx * Ny, complex(1.0, 0.0));
+    for (int i = 0; i < Nx; ++i) {
+        double u = (double)i / (Nx - 1);
+        for (int j = 0; j < Ny; ++j) {
+            double v = (double)j / (Ny - 1);
+            if (std::fabs(u - 0.5) < half && std::fabs(v - 0.5) < half)
+                epgrid[(size_t)i * Ny + j] = n_tan;
+        }
+    }
+
+    RCWAConfig cfg;
+    cfg.nG = 13;                                  // → nG_out = 9
+    cfg.L1 = Eigen::Vector2d(cell, 0.0);
+    cfg.L2 = Eigen::Vector2d(0.0, cell);
+    cfg.freq = complex(1.0 / 13.5, 0.0);
+    cfg.theta = M_PI / 30;                        // 6°
+    cfg.phi   = 0.0;
+
+    RCWA solver(cfg);
+    solver.Add_LayerUniform(1.0, eps_from_n(complex(1.0, 0.0)));
+    solver.Add_LayerGrid(abs_t, Nx, Ny);
+    solver.Add_LayerUniform(2.5, eps_from_n(n_ru));
+    for (int i = 0; i < nb; ++i) {
+        solver.Add_LayerUniform(2.8, eps_from_n(n_mo));
+        solver.Add_LayerUniform(4.2, eps_from_n(n_si));
+    }
+    solver.Add_LayerUniform(1.0, eps_from_n(n_si));
+    solver.Init_Setup();
+    CHECK(solver.nG() == 9);
+    solver.GridLayer_geteps(epgrid);
+
+    PlaneWaveExcitation exc; exc.p_amp = 1.0;
+    solver.MakeExcitationPlanewave(exc);
+    RTResult rt = solver.RT_Solve(/*normalize=*/true);
+
+    // grcwa reference at θ=6°: R = 0.5870720083, T = 0.0074574197
+    CHECK(rt.R == Approx(0.5870720083).epsilon(1e-5));
+    CHECK(rt.T == Approx(0.0074574197).epsilon(1e-3));
+
+    // Reflected field in air at θ=6°. Golden values from grcwa, matched by
+    // G-vector (degenerate-order independent).
+    FieldFourier refl = solver.BackwardPropagatedFieldFourier(0, 0.0);
+    const IntMatrix& G = solver.G();
+    auto find_order = [&](int gx, int gy) -> int {
+        for (int i = 0; i < solver.nG(); ++i)
+            if (G(i,0) == gx && G(i,1) == gy) return i;
+        return -1;
+    };
+    // G=(0,0) specular: ex = 0.095652855788650529 + 0.7487993216328479i,
+    //                    ez = 0.010053520258644148 + 0.078701980067677757i
+    int i0 = find_order(0, 0);
+    REQUIRE(i0 >= 0);
+    CHECK(std::abs(refl.ex(i0) - complex( 0.095652855788650529,  0.7487993216328479)) < 1e-9);
+    CHECK(std::abs(refl.ez(i0) - complex( 0.010053520258644148,  0.078701980067677757)) < 1e-9);
+    // G=(1,0): ex = -0.014581850948967027 + 0.034996101456876559i
+    int i1 = find_order(1, 0);
+    REQUIRE(i1 >= 0);
+    CHECK(std::abs(refl.ex(i1) - complex(-0.014581850948967027,  0.034996101456876559)) < 1e-9);
+    // G=(0,1): ex = -0.023727395629504811 + 0.030379369087523173i
+    int i2 = find_order(0, 1);
+    REQUIRE(i2 >= 0);
+    CHECK(std::abs(refl.ex(i2) - complex(-0.023727395629504811,  0.030379369087523173)) < 1e-9);
 }

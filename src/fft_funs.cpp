@@ -27,11 +27,11 @@ struct FFTWPlanCache::Impl {
         fftw_plan fwd = fftw_plan_dft_2d(Nx, Ny,
                                          reinterpret_cast<fftw_complex*>(fwd_buf),
                                          reinterpret_cast<fftw_complex*>(fwd_buf),
-                                         FFTW_FORWARD, FFTW_MEASURE);
+                                         FFTW_FORWARD, FFTW_ESTIMATE);
         fftw_plan bwd = fftw_plan_dft_2d(Nx, Ny,
                                          reinterpret_cast<fftw_complex*>(bwd_buf),
                                          reinterpret_cast<fftw_complex*>(bwd_buf),
-                                         FFTW_BACKWARD, FFTW_MEASURE);
+                                         FFTW_BACKWARD, FFTW_ESTIMATE);
         auto result = std::make_pair(fwd, bwd);
         plans.emplace(key, result);
         // Note: the FFTW plan references the buffers it was created with.

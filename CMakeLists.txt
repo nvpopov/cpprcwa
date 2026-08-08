@@ -59,6 +59,9 @@ target_link_libraries(cpprcwa
 )
 
 target_compile_features(cpprcwa PUBLIC cxx_std_17)
+# Use BLAS (zgemm) for Eigen matrix products instead of Eigen's internal
+# single-threaded kernels — a large win for the S-matrix star product.
+target_compile_definitions(cpprcwa PRIVATE EIGEN_USE_BLAS)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     target_compile_options(cpprcwa PRIVATE -Wall -Wextra -Wpedantic)
 endif()
