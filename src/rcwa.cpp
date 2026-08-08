@@ -220,24 +220,64 @@ void RCWA::GetSMatrix(int indi, int indj,
 
     for (int l = indi; l < indj; ++l) {
         int lp1 = l + 1;
-        ComplexMatrix kpphi = kp_list_[l] * phi_list_[l];
-        ComplexMatrix kpphi_inv = internal::zinverse(kpphi);
-        ComplexMatrix Q = internal::zinverse(phi_list_[l]) * phi_list_[lp1];
-        ComplexVector qinv = q_list_[lp1].cwiseInverse();
-        ComplexMatrix P = q_list_[l].asDiagonal() * kpphi_inv
-                          * kp_list_[lp1] * phi_list_[lp1] * qinv.asDiagonal();
-        ComplexMatrix T11 = 0.5 * (Q + P);
-        ComplexMatrix T12 = 0.5 * (Q - P);
+        const bool uniform_pair =
+            layer_types_[l] == LayerType::Uniform &&
+            layer_types_[lp1] == LayerType::Uniform;
+
+        ComplexMatrix T11, T12;
         ComplexMatrix d1 = (complex(0,1) * q_list_[l]   * thickness_[l]  ).array().exp().matrix().asDiagonal();
         ComplexMatrix d2 = (complex(0,1) * q_list_[lp1] * thickness_[lp1]).array().exp().matrix().asDiagonal();
 
-        ComplexMatrix P1m = T11 - d1 * S12 * T12;
-        ComplexMatrix P1 = internal::zinverse(P1m);
-        ComplexMatrix new_S11 = P1 * d1 * S11;
-        ComplexMatrix P2 = d1 * S12 * T11 - T12;
-        ComplexMatrix new_S12 = P1 * P2 * d2;
-        ComplexMatrix new_S21 = S21 + S22 * T12 * new_S11;
-        ComplexMatrix new_S22 = S22 * T11 * d2 + S22 * T12 * new_S12;
+        if (uniform_pair) {
+            // phi = I for uniform layers → Q = I. Cache T11/T12 per (eps_l, eps_lp1).
+            UniformPairKey key{uniform_eps_[material_idx_[l]],
+                               uniform_eps_[material_idx_[lp1]]};
+            auto it = uniform_pair_cache_.find(key);
+            if (it == uniform_pair_cache_.end()) {
+                ComplexMatrix kp_l_inv = internal::zinverse(kp_list_[l]);   // = inv(kp_l·phi_l)
+                ComplexVector qinv = q_list_[lp1].cwiseInverse();
+                ComplexMatrix P = q_list_[l].asDiagonal() * kp_l_inv
+                                  * kp_list_[lp1] * qinv.asDiagonal();
+                UniformPairCache c;
+                c.T11 = 0.5 * (ComplexMatrix::Identity(n2, n2) + P);
+                c.T12 = 0.5 * (ComplexMatrix::Identity(n2, n2) - P);
+                it = uniform_pair_cache_.emplace(key, std::move(c)).first;
+            }
+            T11 = it->second.T11;
+            T12 = it->second.T12;
+        } else {
+            ComplexMatrix Q = internal::zinverse(phi_list_[l]) * phi_list_[lp1];
+            ComplexMatrix kpphi_l_inv = internal::zinverse(kp_list_[l] * phi_list_[l]);
+            ComplexVector qinv = q_list_[lp1].cwiseInverse();
+            ComplexMatrix P = q_list_[l].asDiagonal() * kpphi_l_inv
+                              * kp_list_[lp1] * phi_list_[lp1] * qinv.asDiagonal();
+            T11 = 0.5 * (Q + P);
+            T12 = 0.5 * (Q - P);
+        }
+
+        // Redheffer star product (S-update, sequential, cannot cache).
+        // Common subexpressions d1·S12 and S22·T12 are computed once; the
+        // inv(P1m) products are replaced by one LU factorization + two
+        // back-substitutions.
+        ComplexMatrix d1S12 = d1 * S12;                      // O(n²) (d1 diagonal)
+        ComplexMatrix P1m = T11 - d1S12 * T12;               // 1 full matmul
+        std::vector<int> piv = internal::zgetrf_factor(n2, P1m.data(),
+                                                       static_cast<int>(P1m.outerStride()));
+
+        ComplexMatrix new_S11 = d1 * S11;                    // O(n²)
+        internal::zgetrs_solve(n2, n2, P1m.data(), static_cast<int>(P1m.outerStride()),
+                               piv.data(), new_S11.data(),
+                               static_cast<int>(new_S11.outerStride()));
+
+        ComplexMatrix P2 = d1S12 * T11 - T12;                // 1 full matmul
+        ComplexMatrix new_S12 = P2 * d2;                     // O(n²)
+        internal::zgetrs_solve(n2, n2, P1m.data(), static_cast<int>(P1m.outerStride()),
+                               piv.data(), new_S12.data(),
+                               static_cast<int>(new_S12.outerStride()));
+
+        ComplexMatrix S22T12 = S22 * T12;                    // 1 full matmul
+        ComplexMatrix new_S21 = S21 + S22T12 * new_S11;      // 1 full matmul
+        ComplexMatrix new_S22 = S22 * T11 * d2 + S22T12 * new_S12;  // 2 full matmuls
         S11 = std::move(new_S11);
         S12 = std::move(new_S12);
         S21 = std::move(new_S21);

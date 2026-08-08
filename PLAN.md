@@ -58,7 +58,7 @@ tolerance and matches grcwa's `ex1.py`/`ex2.py`/`ex4.py` to printed precision.
 | 5 S-matrix solver | ✅ | Redheffer star product; S4 golden R/T reproduced |
 | 6 Field reconstruction | ✅ | `Solve_Field*`, `Return_eps` (matches grcwa to ~1e-12) |
 | 7 Post-processing | ✅ | `Volume_integral`, stress tensor (matches grcwa) |
-| 8 Examples | ✅ | `ex1`/`ex2`/`ex4` ports + golden scripts + EUV multilayer mirror + EUV absorber + reflected-field validation & plotting |
+| 8 Examples | ✅ | `ex1`/`ex2`/`ex4` ports + golden scripts + EUV multilayer mirror + EUV absorber + reflected-field validation & plotting + quasi-1D line grating |
 | 9 GPU | ⛔ | Deferred (not started) |
 | 10 Polish | ✅ | README, install target; OpenMP/pybind11 deferred |
 
@@ -74,15 +74,22 @@ tolerance and matches grcwa's `ex1.py`/`ex2.py`/`ex4.py` to printed precision.
 - `Matrix_zintegral`'s `Mt` is `4nG×4nG` built from `nG2=q.size()` blocks;
   `Volume_integral`'s `F` is `3nG×4nG` and `Mtotal` is `3nG×3nG`.
 
-**Performance work (vs grcwa, EUV absorber):**
+**Performance work (vs grcwa, EUV absorber, nG=97):**
 - `EIGEN_USE_BLAS` routes matrix products through OpenBLAS `zgemm`
   (~4.4× on matmul vs Eigen's internal kernels).
 - FFTW plans switched `FFTW_MEASURE` → `FFTW_ESTIMATE` (setup drops
   ~20–200 ms per plan; negligible execution penalty at these grid sizes).
 - OpenBLAS thread oversubscription: 12 threads ≈ 4.9 s vs 6 threads ≈ 1.3 s
   for the nG=97 S-matrix. `ex_euv_absorber` caps threads at `min(cores,6)`.
-- Net: **3.4×** (nG=9) and **2.5×** (nG=97) wall-clock speedup vs grcwa,
-  with machine-precision field agreement.
+- S-matrix: uniform-pair T-matrix caching (periodic stacks), thread-local
+  LAPACK workspace reuse, LU-solve + common-subexpression elimination in the
+  star product.
+- Net: total ~2000→~1050 ms and `rt_solve` ~1700→~810 ms (≈2×), ≈5× faster
+  than grcwa overall, with machine-precision field agreement.
+- S-matrix periodic-core doubling was attempted and reverted: the naive
+  stack-recombination formula assumes a continuous boundary medium, which
+  alternating-material cores violate (drops inter-period interfaces,
+  double-counts boundary phases → ~4e-4 R error).
 
 ---
 

@@ -46,7 +46,8 @@ cpprcwa/
 │   ├── ex2_two_layers.cpp      # Two patterned layers, oblique incidence (ex2.py)
 │   ├── ex4_hexagonal.cpp       # Hexagonal lattice, non-orthogonal coords (ex4.py)
 │   ├── ex_euv_multilayer.cpp   # EUV Mo/Si multilayer mirror (Ru cap) reflectivity
-│   └── ex_euv_absorber.cpp     # EUV TaN absorber pattern on top of the mirror
+│   ├── ex_euv_absorber.cpp     # EUV TaN absorber pattern on top of the mirror
+│   └── ex_quasi1d_absorber.cpp # Quasi-1D line grating (500 nm TaN bar, Lx=3.5 um)
 ├── benchmarks/
 │   └── bench_full_rt.cpp       # End-to-end RT_Solve timing
 └── scripts/
@@ -535,10 +536,12 @@ cross-sections of `|E|²` through the cell center (`OUT_hscan.txt`,
 `OUT_vscan.txt`), and the full complex field `Re/Im (Ex, Ey, Ez)` along both
 cross-section lines (`OUT_hfield.txt`, `OUT_vfield.txt`).
 `scripts/plot_reflected_field.py` reproduces the same in grcwa, compares all
-orders, renders `OUT_plot.png` (2D `|E|²` map + `|E|²` cross-sections) and
-`OUT_crossections.png` (Re/Im of Ex, Ey, Ez along the horizontal and vertical
-cross-sections, cpprcwa vs grcwa), and reports a wall-clock performance
-comparison (cpprcwa timing from `OUT_perf.txt`, grcwa timed internally).
+orders, renders `OUT_plot.png` (2D `|E|²` map + `|E|²` cross-sections),
+`OUT_absE.png` (2D `|E|` map + `|E|` cross-sections — the absolute field
+value) and `OUT_crossections.png` (Re/Im of Ex, Ey, Ez along the horizontal
+and vertical cross-sections, cpprcwa vs grcwa), and reports a wall-clock
+performance comparison (cpprcwa timing from `OUT_perf.txt`, grcwa timed
+internally).
 
 For the nG=9 fast config both agree with grcwa to **machine precision**:
 
@@ -558,25 +561,77 @@ An **oblique-incidence variant** (θ = 6°) is covered by a dedicated test
 exactly, and the reflected specular + scattered orders (matched per G-vector)
 agree to machine precision.
 
-### 7.3 Performance vs grcwa (EUV absorber)
+### 7.3 Quasi-1D line-grating example
 
-The library builds with `EIGEN_USE_BLAS` (matrix products via OpenBLAS
-`zgemm` instead of Eigen's single-threaded kernels) and FFTW plans use
-`FFTW_ESTIMATE` (fast planning; the plan cache amortizes it across solves).
-`ex_euv_absorber` caps OpenBLAS at `min(cores, 6)` threads at runtime — with
-more threads the small `2nG×2nG` S-matrix blocks suffer thread-pool overhead
-(measured: 12 threads ≈ 4.9 s vs 6 threads ≈ 1.3 s for the nG=97 solve).
+`examples/ex_quasi1d_absorber.cpp` is the same EUV mask stack, but the TaN
+absorber becomes a **1D line grating** — a 500 nm bar spanning the full y
+extent of a `Lx × Ly` cell with `Lx = 3.5 µm`, `Ly = nly·λ` (default 5λ =
+67.5 nm, "several wavelengths"). Validated against grcwa with the identical
+geometry.
 
-Wall-clock (whole pipeline: build + setup + solve), single run:
+- **Geometry**: `L1 = (3500, 0)`, `L2 = (0, 67.5)` nm; TaN bar 500 nm wide in
+  x, uniform in y (quasi-1D). Same Ru cap / 40× Mo/Si / Si substrate as §7.2.
+- **Quasi-1D harmonic set**: because the bar is y-invariant, every y≠0
+  Fourier coefficient of ε vanishes and the y≠0 orders are never excited.
+  The reciprocal-lattice spacing in y is `1/Ly` (large) vs `1/Lx` in x (tiny),
+  so the circular truncation fills the set with the **x-only row (i, 0)**
+  first — with `nG=101 → nG_out=99`, 99/99 harmonics are `(i, 0)` (pure 1D);
+  larger nG then adds y≠0 harmonics (harmless dead modes that stay at zero
+  amplitude). The header prints `x-only N` of `nG` to show this.
+- **Order fan**: a 3.5 µm-period grating at 13.5 nm supports ±259 propagating
+  x-orders; the example lists the per-order diffraction efficiencies
+  (computed from the per-order reflected Poynting flux `0.5·Re(conj Ex·Hy −
+  conj Ey·Hx)`), showing the expected symmetric ±m pairs. `sum(eff) = R`.
+- **Result** (normal incidence, p-pol, `nG=201 → 199`): R = 0.528927, with
+  199 propagating reflected orders; identical to grcwa at nG = 97 / 199 / 295
+  (R = 0.528790 / 0.528927 / 0.529005).
+- `--field OUT` writes per-order coefficients (`OUT_orders.txt`), per-order
+  efficiency + angle (`OUT_effic.txt`), the real-space `|E|²` grid
+  (`OUT_grid.txt`) and an x-scan through the cell center (`OUT_vscan.txt`).
+  `scripts/plot_quasi1d_field.py` reconstructs the reflected field from the
+  Fourier coefficients and plots the **absolute field value** `|E|`
+  (`OUT_absE.png`): a cross-section along x at the cell center (cpprcwa vs
+  grcwa, with the absorber bar marked) and a 2D `|E|` map over the cell
+  showing the y-uniform quasi-1D nature.
 
-| config | cpprcwa | grcwa | speedup |
-|---|---|---|---|
-| nG=9, 100×100 | 31 ms | 105 ms | 3.4× |
-| nG=97, 200×200 | 2.4 s | 6.0 s | 2.5× |
+### 7.4 Performance vs grcwa (EUV absorber)
 
-Numerical agreement is unchanged (all orders / real-space field match grcwa
-to ~1e-14). For the nG=97 case, the non-Hermitian `zgeev` of the 194×194
-patterned-layer matrix dominates the setup (~360 ms).
+Optimizations applied (all verified to keep the field agreement at ~1e-14):
+
+1. **`EIGEN_USE_BLAS`** — matrix products via OpenBLAS `zgemm` (~4.4× on matmul
+   vs Eigen's single-threaded kernels).
+2. **`FFTW_ESTIMATE`** plans (cached per `(Nx,Ny)`) — fast planning.
+3. **OpenBLAS thread capping** at `min(cores, 6)` — with more threads the small
+   `2nG×2nG` S-matrix blocks suffer thread-pool overhead (12 threads ≈ 4.9 s vs
+   6 threads ≈ 1.3 s measured).
+4. **Uniform-pair T-matrix caching** in the S-matrix — for periodic stacks
+   (Mo/Si multilayers) the interface matrices `T11/T12` of identical
+   uniform-uniform layer pairs are computed once and reused (phi = I ⇒ Q = I,
+   so no per-pair inversion).
+5. **LAPACK workspace reuse** (`thread_local`) — avoids a fresh `lwork` query +
+   allocation per inversion (249 inversions during a solve).
+6. **LU-solve + common subexpressions** in the star product — replaces forming
+   `inv(P1m)` with one `zgetrf` + two `zgetrs`, and hoists `d1·S12`, `S22·T12`.
+
+Wall-clock (whole pipeline: build + setup + solve), median of runs, nG=97:
+
+| metric | before | after |
+|---|---|---|
+| setup (FFT + `zgeev` + eps) | ~340 ms | ~243 ms |
+| `rt_solve` (S-matrix) | ~1700 ms | ~813 ms |
+| total | ~2000 ms | ~1050 ms |
+
+grcwa total for the same case ≈ 5.8 s → cpprcwa ≈ **5× faster** (whole
+pipeline) while matching every reflected order and the real-space field to
+~1e-14.
+
+**Note on S-matrix doubling:** a periodic-core binary-doubling scheme was
+implemented and then reverted — the naive S-matrix recombination assumes a
+continuous boundary medium, which is violated by alternating-material stacks
+(the inter-period interfaces are dropped and boundary phases double-counted),
+giving a small (~4e-4) reflectivity error. Making it correct requires
+accounting for inter-period interfaces in the recombination; left as future
+work.
 
 ---
 

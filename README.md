@@ -51,8 +51,11 @@ Options:
 - OpenBLAS can oversubscribe on small S-matrix blocks: `ex_euv_absorber`
   caps it at `min(cores, 6)` threads at runtime (overridable with
   `--threads N` or `OPENBLAS_NUM_THREADS`).
-- Measured vs grcwa on the EUV absorber case: **3.4×** (nG=9) and **2.5×**
-  (nG=97) wall-clock speedup, with machine-precision field agreement.
+- The S-matrix caches interface matrices for repeated uniform layer pairs
+  (helps periodic multilayer stacks), reuses LAPACK workspaces, and uses
+  LU-solve + common-subexpression elimination in the star product.
+- Measured on the EUV absorber (nG=97): ~2× faster than the naive build, and
+  ≈5× faster than grcwa overall, with machine-precision field agreement.
 
 ## Quick start
 
@@ -110,7 +113,8 @@ src/              implementations (rcwa.cpp, kbloch.cpp, fft_funs.cpp,
                    internal/{lapack_wrappers,branch_cut,utils}.{h,cpp})
 tests/            Catch2 unit tests + golden reference outputs
 examples/         ex1 (square holes), ex2 (two layers), ex4 (hexagonal),
-                  ex_euv_multilayer (Mo/Si mirror), ex_euv_absorber (TaN pattern)
+                  ex_euv_multilayer (Mo/Si mirror), ex_euv_absorber (TaN pattern),
+                  ex_quasi1d_absorber (quasi-1D line grating)
 benchmarks/       timed benchmarks
 scripts/          golden-file generation / comparison helpers
 ```

@@ -5,6 +5,7 @@
 #include <utility>
 #include <vector>
 #include <optional>
+#include <map>
 #include <cpprcwa/types.h>
 
 namespace cpprcwa {
@@ -132,6 +133,25 @@ private:
 
     // ── Excitation ──
     ComplexVector a0_, bN_;
+
+    // ── S-matrix uniform-pair cache ──
+    // For uniform-uniform interfaces the interface matrices T11/T12 depend
+    // only on (eps_l, eps_lp1) (phi = I). Periodic stacks (e.g. Mo/Si EUV
+    // multilayers) repeat the same pair many times; caching avoids redundant
+    // inversions and matrix products.
+    struct UniformPairKey {
+        complex eps_l, eps_lp1;
+        bool operator<(const UniformPairKey& o) const {
+            if (eps_l.real() != o.eps_l.real()) return eps_l.real() < o.eps_l.real();
+            if (eps_l.imag() != o.eps_l.imag()) return eps_l.imag() < o.eps_l.imag();
+            if (eps_lp1.real() != o.eps_lp1.real()) return eps_lp1.real() < o.eps_lp1.real();
+            return eps_lp1.imag() < o.eps_lp1.imag();
+        }
+    };
+    struct UniformPairCache {
+        ComplexMatrix T11, T12;
+    };
+    std::map<UniformPairKey, UniformPairCache> uniform_pair_cache_;
 
     // ── Internal helpers ──
     void MakeKPMatrix_uniform(complex omega, const ComplexVector& kx, const ComplexVector& ky,

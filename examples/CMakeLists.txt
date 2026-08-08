@@ -12,3 +12,6 @@ target_link_libraries(ex_euv_multilayer PRIVATE cpprcwa::cpprcwa)
 
 add_executable(ex_euv_absorber ex_euv_absorber.cpp)
 target_link_libraries(ex_euv_absorber PRIVATE cpprcwa::cpprcwa)
+
+add_executable(ex_quasi1d_absorber ex_quasi1d_absorber.cpp)
+target_link_libraries(ex_quasi1d_absorber PRIVATE cpprcwa::cpprcwa)

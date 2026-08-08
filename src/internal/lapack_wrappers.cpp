@@ -31,7 +31,12 @@ namespace internal {
 
 void zgetri_inplace(int n, complex* A, int lda, int layer_for_error) {
     if (n == 0) return;
-    std::vector<int> ipiv(n);
+    // Reusable per-thread workspace: avoids the lwork query + fresh allocation
+    // on every call (the S-matrix star product inverts many matrices).
+    static thread_local std::vector<complex> work;
+    static thread_local int work_size = 0;
+
+    std::vector<int> ipiv(static_cast<size_t>(n));
     int info = 0;
     zgetrf_(&n, &n, A, &lda, ipiv.data(), &info);
     if (info != 0) {
@@ -39,12 +44,14 @@ void zgetri_inplace(int n, complex* A, int lda, int layer_for_error) {
             throw error::SingularMatrixError("zgetrf", info, layer_for_error);
         throw error::LapackError("zgetrf", "zgetrf", info);
     }
-    // workspace query
-    int lwork = -1;
-    complex wkopt;
-    zgetri_(&n, A, &lda, ipiv.data(), &wkopt, &lwork, &info);
-    lwork = static_cast<int>(wkopt.real());
-    std::vector<complex> work(lwork);
+    if (work_size < n) {               // grow (reused across calls of any size)
+        int lwork = -1;
+        complex wkopt;
+        zgetri_(&n, A, &lda, ipiv.data(), &wkopt, &lwork, &info);
+        work_size = static_cast<int>(wkopt.real());
+        work.resize(static_cast<size_t>(work_size));
+    }
+    int lwork = work_size;
     zgetri_(&n, A, &lda, ipiv.data(), work.data(), &lwork, &info);
     if (info != 0)
         throw error::LapackError("zgetri", "zgetri", info);
@@ -55,6 +62,29 @@ ComplexMatrix zinverse(const ComplexMatrix& A, int layer_for_error) {
     zgetri_inplace(static_cast<int>(A.rows()), B.data(),
                    static_cast<int>(B.outerStride()), layer_for_error);
     return B;
+}
+
+std::vector<int> zgetrf_factor(int n, complex* A, int lda, int layer_for_error) {
+    std::vector<int> ipiv(static_cast<size_t>(n));
+    int info = 0;
+    zgetrf_(&n, &n, A, &lda, ipiv.data(), &info);
+    if (info != 0) {
+        if (layer_for_error >= 0)
+            throw error::SingularMatrixError("zgetrf", info, layer_for_error);
+        throw error::LapackError("zgetrf", "zgetrf", info);
+    }
+    return ipiv;
+}
+
+void zgetrs_solve(int n, int nrhs, const complex* A, int lda, const int* ipiv,
+                  complex* B, int ldb, int layer_for_error) {
+    char trans = 'N';
+    int info = 0;
+    zgetrs_(&trans, &n, &nrhs, A, &lda, ipiv, B, &ldb, &info);
+    if (info != 0) {
+        (void)layer_for_error;
+        throw error::LapackError("zgetrs", "zgetrs", info);
+    }
 }
 
 void zgesv(int n, int nrhs,
