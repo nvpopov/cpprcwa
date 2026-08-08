@@ -14,6 +14,31 @@ option(CPPRCWA_BUILD_EXAMPLES "Build cpprcwa examples"      ON)
 option(CPPRCWA_BUILD_BENCHMARKS "Build cpprcwa benchmarks"  OFF)
 option(CPPRCWA_USE_CUDA      "Enable CUDA GPU backend"      OFF)
 
+# ── Release optimization ────────────────────────────────────────────────────
+# Explicit, tuned compiler flags on top of CMake's -O3. All are scoped to the
+# Release configuration and are safe for the validated FP results (branch
+# cuts, evanescent fields).
+option(CPPRCWA_USE_NATIVE   "Use -march=native / -mtune=native (CPU-specific SIMD)" ON)
+option(CPPRCWA_USE_LTO      "Enable link-time optimization (-flto)"               ON)
+option(CPPRCWA_USE_FASTMATH "Enable -ffast-math (may alter FP rounding; opt-in)"  OFF)
+
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    foreach(flag -O3 -funroll-loops -fno-math-errno -ffp-contract=fast)
+        add_compile_options($<$<CONFIG:Release>:${flag}>)
+    endforeach()
+    if(CPPRCWA_USE_NATIVE)
+        add_compile_options($<$<CONFIG:Release>:-march=native>)
+        add_compile_options($<$<CONFIG:Release>:-mtune=native>)
+    endif()
+    if(CPPRCWA_USE_LTO)
+        add_compile_options($<$<CONFIG:Release>:-flto>)
+        add_link_options($<$<CONFIG:Release>:-flto>)
+    endif()
+    if(CPPRCWA_USE_FASTMATH)
+        add_compile_options($<$<CONFIG:Release>:-ffast-math>)
+    endif()
+endif()
+
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # ── Dependencies ───────────────────────────────────────────────────────────

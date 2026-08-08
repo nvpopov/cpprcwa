@@ -70,9 +70,11 @@ int main(int argc, char** argv) {
     std::vector<double> pos;
     std::string  out_prefix;
     int threads = 0;   // 0 = auto
+    bool quasi1d = false;   // restrict to x-only harmonics (exact: y-invariant bar)
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--field") == 0 && i + 1 < argc) out_prefix = argv[++i];
         else if (std::strcmp(argv[i], "--threads") == 0 && i + 1 < argc) threads = std::atoi(argv[++i]);
+        else if (std::strcmp(argv[i], "--quasi1d") == 0) quasi1d = true;
         else pos.push_back(std::atof(argv[i]));
     }
     const int    nG_req = pos.size() > 0 ? (int)pos[0] : 201;
@@ -104,6 +106,7 @@ int main(int argc, char** argv) {
     cfg.freq = complex(1.0 / lambda, 0.0);
     cfg.theta = 0.0;
     cfg.phi   = 0.0;
+    cfg.quasi1d = quasi1d;
 
     RCWA solver(cfg);
     solver.Add_LayerUniform(1.0, eps_from_n(n_vac));      // incident vacuum
@@ -138,9 +141,10 @@ int main(int argc, char** argv) {
         if (G(i, 1) == 0) ++nx_only;
 
     const double fill = wx / Lx;
-    std::printf("Quasi-1D EUV absorber: nG=%d (x-only %d), cell %g x %g nm "
+    std::printf("Quasi-1D EUV absorber: nG=%d (x-only %d)%s, cell %g x %g nm "
                 "(%g um x %.1f nm = %.1f lambda), t_abs=%.1f nm, nb=%d, lambda=%.2f nm\n",
-                nG, nx_only, Lx, Ly, Lx * 1e-3, Ly, nly, abs_t, nb, lambda);
+                nG, nx_only, quasi1d ? " [1D harmonic set]" : "", Lx, Ly,
+                Lx * 1e-3, Ly, nly, abs_t, nb, lambda);
     std::printf("absorber line duty cycle = %.1f%%\n", 100.0 * fill);
     std::printf("Reflectivity R = %.6f\n", rt.R);
     std::printf("Transmission T = %.6g\n", rt.T);

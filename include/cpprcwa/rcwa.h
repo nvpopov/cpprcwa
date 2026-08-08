@@ -101,6 +101,7 @@ private:
     complex freq_, omega_;            // omega = 2*pi*freq (both complex)
     Eigen::Vector2d L1_, L2_;
     double theta_, phi_;
+    bool quasi1d_ = false;             // restrict harmonic set to j==0 (see RCWAConfig)
     double normalization_ = 1.0;
     Direction direction_ = Direction::Forward;
 

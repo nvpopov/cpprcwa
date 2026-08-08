@@ -31,6 +31,12 @@ struct RCWAConfig {
     double theta = 0.0;                  // Polar angle (radians)
     double phi   = 0.0;                  // Azimuthal angle (radians)
     int verbose  = 1;
+    // Restrict the harmonic set to the x-only row (i, j=0). EXACT only when
+    // the structure is y-invariant (all y≠0 Fourier coefficients of ε are
+    // zero): the y≠0 harmonics then decouple and stay at zero amplitude, so
+    // dropping them changes nothing but shrinks every matrix (≈1.8× fewer
+    // harmonics for a 1D grating). Use only for genuinely 1D geometries.
+    bool quasi1d = false;
 };
 
 // ── Layers ─────────────────────────────────────────────────────────────────

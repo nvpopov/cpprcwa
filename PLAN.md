@@ -84,6 +84,11 @@ tolerance and matches grcwa's `ex1.py`/`ex2.py`/`ex4.py` to printed precision.
 - S-matrix: uniform-pair T-matrix caching (periodic stacks), thread-local
   LAPACK workspace reuse, LU-solve + common-subexpression elimination in the
   star product.
+- Quasi-1D (y-invariant) exact reductions: uniform-layer `(kp,q,phi)` caching
+  by ε, a 1D harmonic filter (j==0 only), and a diagonal scalar recursion for
+  the all-uniform multilayer suffix assembled via an overlapping cascade.
+  `ex_quasi1d_absorber --quasi1d` (nG=201) drops total ~7.2 s → ~0.37 s
+  (~30× vs grcwa's 11.0 s) with machine-precision agreement (normal + oblique).
 - Net: total ~2000→~1050 ms and `rt_solve` ~1700→~810 ms (≈2×), ≈5× faster
   than grcwa overall, with machine-precision field agreement.
 - S-matrix periodic-core doubling was attempted and reverted: the naive

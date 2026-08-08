@@ -17,7 +17,8 @@ RCWA::RCWA(const RCWAConfig& config)
       L1_(config.L1),
       L2_(config.L2),
       theta_(config.theta),
-      phi_(config.phi) {}
+      phi_(config.phi),
+      quasi1d_(config.quasi1d) {}
 
 RCWA::~RCWA() = default;
 
@@ -54,6 +55,21 @@ void RCWA::Init_Setup(double Pscale, int Gmethod) {
     G_ = std::move(Gmat);
     nG_ = nGout;
 
+    if (quasi1d_) {
+        // Restrict to the x-only harmonic row (i, j=0). Exact for y-invariant
+        // structures (the y≠0 harmonics decouple and stay at zero amplitude);
+        // shrinks every matrix to the pure-1D set.
+        int keep = 0;
+        for (int r = 0; r < nG_; ++r)
+            if (G_(r, 1) == 0) ++keep;
+        IntMatrix G1(keep, 2);
+        int k = 0;
+        for (int r = 0; r < nG_; ++r)
+            if (G_(r, 1) == 0) G1.row(k++) = G_.row(r);
+        G_ = std::move(G1);
+        nG_ = keep;
+    }
+
     // kx0, ky0 from layer-0 epsilon
     complex eps0 = uniform_eps_.front();
     complex kx0 = omega_ * std::sin(theta_) * std::cos(phi_) * std::sqrt(eps0);
@@ -69,13 +85,35 @@ void RCWA::Init_Setup(double Pscale, int Gmethod) {
 
     normalization_ = std::sqrt(eps0.real()) / std::cos(theta_);   // rcwa.py:103
 
+    // Uniform layers share kp/q/phi across identical eps values (they depend
+    // only on eps + the global kx/ky/omega). Periodic stacks (Mo/Si EUV
+    // multilayers) repeat a few eps values dozens of times — caching turns 80
+    // eigen/matrix setups into ~5.
+    struct EpsKey {
+        complex eps;
+        bool operator<(const EpsKey& o) const {
+            if (eps.real() != o.eps.real()) return eps.real() < o.eps.real();
+            return eps.imag() < o.eps.imag();
+        }
+    };
+    std::map<EpsKey, std::pair<ComplexMatrix, ComplexVector>> uni_cache;
+
     int uniform_idx = 0;
     for (int li = 0; li < nLayers; ++li) {
         if (layer_types_[li] != LayerType::Uniform) continue;
         complex eps = uniform_eps_[uniform_idx];
-        MakeKPMatrix_uniform(omega_, kx_, ky_, eps, kp_list_[li]);
-        SolveLayerEigensystem_uniform(omega_, kx_, ky_, eps,
-                                      q_list_[li], phi_list_[li]);
+        EpsKey key{eps};
+        auto it = uni_cache.find(key);
+        if (it == uni_cache.end()) {
+            MakeKPMatrix_uniform(omega_, kx_, ky_, eps, kp_list_[li]);
+            SolveLayerEigensystem_uniform(omega_, kx_, ky_, eps,
+                                          q_list_[li], phi_list_[li]);
+            it = uni_cache.emplace(key, std::make_pair(kp_list_[li], q_list_[li])).first;
+        } else {
+            kp_list_[li] = it->second.first;
+            q_list_[li]  = it->second.second;
+            phi_list_[li] = ComplexMatrix::Identity(2 * nG_, 2 * nG_);
+        }
         ++uniform_idx;
     }
 }
@@ -212,13 +250,10 @@ void RCWA::GetSMatrix(int indi, int indj,
         S21 = ComplexMatrix::Zero(n2, n2);
         return;
     }
-    // Initialize identity S at indi
-    S11 = ComplexMatrix::Identity(n2, n2);
-    S22 = ComplexMatrix::Identity(n2, n2);
-    S12 = ComplexMatrix::Zero(n2, n2);
-    S21 = ComplexMatrix::Zero(n2, n2);
 
-    for (int l = indi; l < indj; ++l) {
+    // One Redheffer star-product step: append the interface (l, l+1) to S.
+    auto step = [&](int l, ComplexMatrix& s11, ComplexMatrix& s12,
+                    ComplexMatrix& s21, ComplexMatrix& s22) {
         int lp1 = l + 1;
         const bool uniform_pair =
             layer_types_[l] == LayerType::Uniform &&
@@ -259,12 +294,12 @@ void RCWA::GetSMatrix(int indi, int indj,
         // Common subexpressions d1·S12 and S22·T12 are computed once; the
         // inv(P1m) products are replaced by one LU factorization + two
         // back-substitutions.
-        ComplexMatrix d1S12 = d1 * S12;                      // O(n²) (d1 diagonal)
+        ComplexMatrix d1S12 = d1 * s12;                      // O(n²) (d1 diagonal)
         ComplexMatrix P1m = T11 - d1S12 * T12;               // 1 full matmul
         std::vector<int> piv = internal::zgetrf_factor(n2, P1m.data(),
                                                        static_cast<int>(P1m.outerStride()));
 
-        ComplexMatrix new_S11 = d1 * S11;                    // O(n²)
+        ComplexMatrix new_S11 = d1 * s11;                    // O(n²)
         internal::zgetrs_solve(n2, n2, P1m.data(), static_cast<int>(P1m.outerStride()),
                                piv.data(), new_S11.data(),
                                static_cast<int>(new_S11.outerStride()));
@@ -275,14 +310,86 @@ void RCWA::GetSMatrix(int indi, int indj,
                                piv.data(), new_S12.data(),
                                static_cast<int>(new_S12.outerStride()));
 
-        ComplexMatrix S22T12 = S22 * T12;                    // 1 full matmul
-        ComplexMatrix new_S21 = S21 + S22T12 * new_S11;      // 1 full matmul
-        ComplexMatrix new_S22 = S22 * T11 * d2 + S22T12 * new_S12;  // 2 full matmuls
-        S11 = std::move(new_S11);
-        S12 = std::move(new_S12);
-        S21 = std::move(new_S21);
-        S22 = std::move(new_S22);
+        ComplexMatrix S22T12 = s22 * T12;                    // 1 full matmul
+        ComplexMatrix new_S21 = s21 + S22T12 * new_S11;      // 1 full matmul
+        ComplexMatrix new_S22 = s22 * T11 * d2 + S22T12 * new_S12;  // 2 full matmuls
+        s11 = std::move(new_S11);
+        s12 = std::move(new_S12);
+        s21 = std::move(new_S21);
+        s22 = std::move(new_S22);
+    };
+
+    // ── quasi-1D fast path ──
+    // With the 1D harmonic set (j==0) every uniform-layer kp/q/phi is diagonal,
+    // so the S-matrix of an all-uniform layer range is exactly diagonal. Split
+    // the stack at the start of the trailing uniform suffix: compute the (grid
+    // + interface) prefix with the general sequential loop, the uniform suffix
+    // with a scalar (per-harmonic) recursion, then assemble with the
+    // overlapping-cascade formula.
+    if (quasi1d_) {
+        int m = indj;
+        while (m >= indi && layer_types_[m] == LayerType::Uniform) --m;
+        ++m;   // layers [m, indj] are all uniform (if m <= indj)
+        if (m <= indj) {
+            // L = S(indi, m) — general prefix (may contain patterned layers).
+            ComplexMatrix L11 = ComplexMatrix::Identity(n2, n2);
+            ComplexMatrix L22 = ComplexMatrix::Identity(n2, n2);
+            ComplexMatrix L12 = ComplexMatrix::Zero(n2, n2);
+            ComplexMatrix L21 = ComplexMatrix::Zero(n2, n2);
+            for (int l = indi; l < m; ++l) step(l, L11, L12, L21, L22);
+
+            // R = S(m, indj) — all-uniform suffix, diagonal. Scalar recursion
+            // over the 2nG harmonics.
+            ComplexVector r11 = ComplexVector::Ones(n2);
+            ComplexVector r22 = ComplexVector::Ones(n2);
+            ComplexVector r12 = ComplexVector::Zero(n2);
+            ComplexVector r21 = ComplexVector::Zero(n2);
+            for (int l = m; l < indj; ++l) {
+                int lp1 = l + 1;
+                const ComplexVector& ql = q_list_[l];
+                const ComplexVector& qb = q_list_[lp1];
+                for (int h = 0; h < n2; ++h) {
+                    complex d1 = std::exp(complex(0, 1) * ql(h) * thickness_[l]);
+                    complex d2 = std::exp(complex(0, 1) * qb(h) * thickness_[lp1]);
+                    complex kl = kp_list_[l](h, h), kb = kp_list_[lp1](h, h);
+                    complex P = (ql(h) / kl) * (kb / qb(h));
+                    complex T11 = 0.5 * (complex(1, 0) + P);
+                    complex T12 = 0.5 * (complex(1, 0) - P);
+                    complex P1m = T11 - d1 * r12(h) * T12;
+                    complex ns11 = d1 * r11(h) / P1m;
+                    complex ns12 = (d1 * r12(h) * T11 - T12) * d2 / P1m;
+                    complex ns21 = r21(h) + r22(h) * T12 * ns11;
+                    complex ns22 = r22(h) * (T11 * d2 + T12 * ns12);
+                    r11(h) = ns11; r12(h) = ns12; r21(h) = ns21; r22(h) = ns22;
+                }
+            }
+            ComplexMatrix R11 = r11.asDiagonal();
+            ComplexMatrix R12 = r12.asDiagonal();
+            ComplexMatrix R21 = r21.asDiagonal();
+            ComplexMatrix R22 = r22.asDiagonal();
+
+            // Overlapping cascade: L = S(indi, m), R = S(m, indj) share layer m.
+            // M = inv(I - L12·R21); S11=R11·M·L11, S12=R11·M·L12·R22+R12,
+            // S21=L21+L22·R21·M·L11, S22=L22·R21·M·L12·R22+L22·R22.
+            ComplexMatrix M = internal::zinverse(
+                ComplexMatrix::Identity(n2, n2) - L12 * R21);
+            ComplexMatrix ML11 = M * L11;
+            ComplexMatrix ML12R22 = M * (L12 * R22);
+            S11 = R11 * ML11;
+            S12 = R11 * ML12R22 + R12;
+            S21 = L21 + L22 * (R21 * ML11);
+            S22 = L22 * (R21 * ML12R22) + L22 * R22;
+            return;
+        }
     }
+
+    // ── General sequential path ──
+    S11 = ComplexMatrix::Identity(n2, n2);
+    S22 = ComplexMatrix::Identity(n2, n2);
+    S12 = ComplexMatrix::Zero(n2, n2);
+    S21 = ComplexMatrix::Zero(n2, n2);
+    for (int l = indi; l < indj; ++l)
+        step(l, S11, S12, S21, S22);
 }
 
 void RCWA::SolveExterior(const ComplexVector& a0, const ComplexVector& bN,

@@ -42,6 +42,15 @@ Options:
 | `CPPRCWA_BUILD_EXAMPLES` | `ON` | Example programs (`examples/`) |
 | `CPPRCWA_BUILD_BENCHMARKS` | `OFF` | Timed benchmarks (`benchmarks/`) |
 | `CPPRCWA_USE_CUDA` | `OFF` | GPU backend (not yet implemented) |
+| `CPPRCWA_USE_NATIVE` | `ON` | Release: `-march=native -mtune=native` (CPU-specific SIMD) |
+| `CPPRCWA_USE_LTO` | `ON` | Release: `-flto` (link-time optimization) |
+| `CPPRCWA_USE_FASTMATH` | `OFF` | Release: `-ffast-math` (opt-in; alters FP rounding) |
+
+Release builds also add `-funroll-loops -fno-math-errno -ffp-contract=fast`
+(GCC/Clang). The heavy `zgemm`/`zgeev` work runs in prebuilt OpenBLAS/LAPACK,
+so these flags mainly speed up the surrounding C++ scalar code (~5–10%
+wall-clock); they are verified to leave R and the grcwa field agreement at
+machine precision.
 
 ## Performance notes
 
@@ -54,6 +63,14 @@ Options:
 - The S-matrix caches interface matrices for repeated uniform layer pairs
   (helps periodic multilayer stacks), reuses LAPACK workspaces, and uses
   LU-solve + common-subexpression elimination in the star product.
+- Uniform layers share `(kp, q, phi)` across identical ε values (cached in
+  `Init_Setup`), turning 80 eigen/matrix setups into ~5 for periodic stacks.
+- **Quasi-1D structures** (`cfg.quasi1d`): exact reductions for y-invariant
+  geometries — the harmonic set is filtered to the x-only row, and the
+  all-uniform multilayer suffix is solved with a scalar (diagonal) recursion
+  combined via an overlapping cascade. Measured ~30× faster than grcwa
+  (`ex_quasi1d_absorber --quasi1d`, nG=201), with machine-precision
+  agreement.
 - Measured on the EUV absorber (nG=97): ~2× faster than the naive build, and
   ≈5× faster than grcwa overall, with machine-precision field agreement.
 

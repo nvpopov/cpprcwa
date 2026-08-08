@@ -585,6 +585,47 @@ geometry.
 - **Result** (normal incidence, p-pol, `nG=201 → 199`): R = 0.528927, with
   199 propagating reflected orders; identical to grcwa at nG = 97 / 199 / 295
   (R = 0.528790 / 0.528927 / 0.529005).
+
+#### Quasi-1D performance optimization (`--quasi1d`)
+
+The example exposes a solver flag `cfg.quasi1d = true` that makes two
+**exact** reductions for y-invariant structures (the y≠0 harmonics decouple
+and stay at zero amplitude, so they carry no physics):
+
+1. **1D harmonic filter** — after the circular `getG` selection, keep only the
+   x-only row `(i, j=0)`. For `nG=201` this drops 199 → 113 harmonics (the 86
+   y≠0 ones are dead modes). Every matrix shrinks by ~1.8× (cost scales as
+   `(2nG)³` → ~5.5× less flops).
+2. **Diagonal uniform-core S-matrix** — with the 1D set every uniform-layer
+   `kp/q/phi` is *exactly diagonal* (all `ky=0`), so the S-matrix of an
+   all-uniform range is diagonal. `GetSMatrix` now detects the trailing
+   uniform suffix (the Mo/Si multilayer + substrate), computes it with a
+   scalar per-harmonic recursion (O(n) per interface instead of O(n³)), and
+   assembles it with the general prefix (vac | grid | Ru) using the
+   **overlapping-cascade** formula `M=(I−L12·R21)⁻¹`,
+   `S11=R11·M·L11`, `S12=R11·M·L12·R22+R12`,
+   `S21=L21+L22·R21·M·L11`, `S22=L22·R21·M·L12·R22+L22·R22`
+   (identical to the `SolveInterior` split, validated to ~2e-15 in Python and
+   ~1e-13 in the per-order field comparison). The star-product step was also
+   factored into a reusable lambda so the general path is bit-identical.
+
+Wall-clock (nG=201, 40 Mo/Si bilayers, median):
+
+| build | total | vs grcwa (11.0 s) |
+|---|---|---|
+| original (199 harmonics) | ~7.2 s | 1.5× |
+| + uniform-layer `(kp,q,φ)` caching (81→5 setups) | ~5.7 s | 1.9× |
+| + `--quasi1d` 1D filter (199→113) | ~1.6 s | 6.9× |
+| + diagonal uniform-core fast path | **~0.37 s** | **~30×** |
+
+R is unchanged (0.528927 = grcwa) at every stage; the per-order reflected
+field agrees with the general path to ~6e-14 and with grcwa to ~1e-13, at
+normal incidence and at θ = 6° / 30° (agreement ~1e-14).
+
+**Note on the eps-grid convention:** the examples and `scripts/*.py` place
+`n` (not `n²`) in the patterned grid (a pre-existing convention shared with
+grcwa). Keep both sides consistent; using `n²` gives a different (physical)
+permittivity and different R.
 - `--field OUT` writes per-order coefficients (`OUT_orders.txt`), per-order
   efficiency + angle (`OUT_effic.txt`), the real-space `|E|²` grid
   (`OUT_grid.txt`) and an x-scan through the cell center (`OUT_vscan.txt`).
