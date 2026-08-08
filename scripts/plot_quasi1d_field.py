@@ -177,7 +177,7 @@ def main():
         return 0
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.4),
-                             gridspec_kw={"width_ratios": [1.3, 1]})
+                             gridspec_kw={"width_ratios": [1.15, 1]})
 
     # Panel 1: |E| cross-section along x at y = Ly/2.
     ax = axes[0]
@@ -195,22 +195,26 @@ def main():
     ax.set_title("Reflected |E| along x (y = cell center)")
     ax.set_xlabel("x [nm]")
     ax.set_ylabel("|E|")
-    ax.legend(loc="upper right", fontsize=8)
     ax.grid(alpha=0.3)
     ax2 = ax.twinx()
-    ax2.plot(xs, absE_c ** 2, color="k", lw=0.8, ls=":", alpha=0.6)
+    ax2.plot(xs, absE_c ** 2, color="k", lw=0.8, ls=":", alpha=0.6,
+             label="cpprcwa |E|²")
     ax2.set_ylabel("|E|²", color="0.3")
     ax2.tick_params(axis="y", labelcolor="0.3")
+    lines = ax.get_lines() + ax2.get_lines()
+    ax.legend(lines, [l.get_label() for l in lines], loc="upper right",
+              fontsize=8)
 
-    # Panel 2: 2D |E| map over the cell.
+    # Panel 2: 2D |E| map over the cell. The line grating is y-invariant, so
+    # the map is a band: bright open areas, dark band over the TaN bar.
     ax3 = axes[1]
     im = ax3.pcolormesh(x2d, y2d, absE_map.T, shading="gouraud", cmap="inferno")
-    ax3.axvline((Lx - wx) / 2, color="w", lw=0.8, ls="--")
-    ax3.axvline((Lx + wx) / 2, color="w", lw=0.8, ls="--")
-    ax3.set_title("Reflected |E| over the cell (|E| map)")
+    ax3.axvline((Lx - wx) / 2, color="w", lw=1.0, ls="--")
+    ax3.axvline((Lx + wx) / 2, color="w", lw=1.0, ls="--")
+    ax3.set_title("Reflected |E| over the cell\n(y-invariant line grating)")
     ax3.set_xlabel("x [nm]")
     ax3.set_ylabel("y [nm]")
-    ax3.set_aspect(Ly / Lx)   # physical aspect (y magnified for readability)
+    ax3.set_aspect("auto")
     fig.colorbar(im, ax=ax3, fraction=0.046, label="|E|")
 
     fig.suptitle(f"Quasi-1D EUV line grating — reflected |E|, nG={nG}, "

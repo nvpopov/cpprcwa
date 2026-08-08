@@ -1,0 +1,3 @@
+setup_ms 317.112
+rt_solve_ms 1127.287
+total_ms 1444.399
