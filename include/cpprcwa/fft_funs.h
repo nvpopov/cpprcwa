@@ -15,9 +15,15 @@ public:
     FFTWPlanCache();
     ~FFTWPlanCache();
 
+    struct Plans {
+        fftw_plan fwd;
+        fftw_plan bwd;
+    };
+
     // Returns (forward, backward) plans for the given grid size. The cache
-    // owns the plans; caller must NOT destroy them.
-    std::pair<fftw_plan, fftw_plan> get(int Nx, int Ny);
+    // owns the plans (and their planning buffers); caller must NOT destroy
+    // them.
+    Plans get(int Nx, int Ny);
 
     FFTWPlanCache(const FFTWPlanCache&) = delete;
     FFTWPlanCache& operator=(const FFTWPlanCache&) = delete;

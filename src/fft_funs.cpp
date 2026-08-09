@@ -14,37 +14,45 @@ struct FFTWPlanCache::Impl {
             return std::hash<long long>()((long long)k.first * 1000000LL + k.second);
         }
     };
-    std::unordered_map<Key, std::pair<fftw_plan, fftw_plan>, KeyHash> plans;
+    struct Entry {
+        fftw_plan fwd = nullptr;
+        fftw_plan bwd = nullptr;
+        void* fwd_buf = nullptr;   // planning buffers (fftw_malloc) owned by us
+        void* bwd_buf = nullptr;
+    };
+    std::unordered_map<Key, Entry, KeyHash> plans;
     std::mutex mtx;
 
-    std::pair<fftw_plan, fftw_plan> get(int Nx, int Ny) {
+    Entry& get(int Nx, int Ny) {
         std::lock_guard<std::mutex> lock(mtx);
         Key key{Nx, Ny};
         auto it = plans.find(key);
         if (it != plans.end()) return it->second;
-        auto* fwd_buf = static_cast<complex*>(fftw_malloc(sizeof(complex) * Nx * Ny));
-        auto* bwd_buf = static_cast<complex*>(fftw_malloc(sizeof(complex) * Nx * Ny));
-        fftw_plan fwd = fftw_plan_dft_2d(Nx, Ny,
-                                         reinterpret_cast<fftw_complex*>(fwd_buf),
-                                         reinterpret_cast<fftw_complex*>(fwd_buf),
-                                         FFTW_FORWARD, FFTW_ESTIMATE);
-        fftw_plan bwd = fftw_plan_dft_2d(Nx, Ny,
-                                         reinterpret_cast<fftw_complex*>(bwd_buf),
-                                         reinterpret_cast<fftw_complex*>(bwd_buf),
-                                         FFTW_BACKWARD, FFTW_ESTIMATE);
-        auto result = std::make_pair(fwd, bwd);
-        plans.emplace(key, result);
+        Entry e;
+        e.fwd_buf = fftw_malloc(sizeof(complex) * Nx * Ny);
+        e.bwd_buf = fftw_malloc(sizeof(complex) * Nx * Ny);
+        e.fwd = fftw_plan_dft_2d(Nx, Ny,
+                                 reinterpret_cast<fftw_complex*>(e.fwd_buf),
+                                 reinterpret_cast<fftw_complex*>(e.fwd_buf),
+                                 FFTW_FORWARD, FFTW_ESTIMATE);
+        e.bwd = fftw_plan_dft_2d(Nx, Ny,
+                                 reinterpret_cast<fftw_complex*>(e.bwd_buf),
+                                 reinterpret_cast<fftw_complex*>(e.bwd_buf),
+                                 FFTW_BACKWARD, FFTW_ESTIMATE);
+        auto [it2, _] = plans.emplace(key, std::move(e));
         // Note: the FFTW plan references the buffers it was created with.
         // Our wrappers copy data into a contiguous buffer before execute,
         // so the planning buffers are owned by us for the plan's lifetime.
         // (Caller is responsible for providing their own arrays at execute.)
-        return result;
+        return it2->second;
     }
 
     ~Impl() {
         for (auto& kv : plans) {
-            if (kv.second.first)  fftw_destroy_plan(kv.second.first);
-            if (kv.second.second) fftw_destroy_plan(kv.second.second);
+            if (kv.second.fwd)  fftw_destroy_plan(kv.second.fwd);
+            if (kv.second.bwd)  fftw_destroy_plan(kv.second.bwd);
+            fftw_free(kv.second.fwd_buf);
+            fftw_free(kv.second.bwd_buf);
         }
     }
 };
@@ -54,8 +62,9 @@ FFTWPlanCache::FFTWPlanCache() : impl_(new Impl()) {}
 
 FFTWPlanCache::~FFTWPlanCache() { delete impl_; }
 
-std::pair<fftw_plan, fftw_plan> FFTWPlanCache::get(int Nx, int Ny) {
-    return impl_->get(Nx, Ny);
+FFTWPlanCache::Plans FFTWPlanCache::get(int Nx, int Ny) {
+    Impl::Entry& e = impl_->get(Nx, Ny);
+    return {e.fwd, e.bwd};
 }
 
 // ── FFT helpers ─────────────────────────────────────────────────────────────
@@ -83,13 +92,12 @@ ComplexMatrix get_conv(double dN,
                        const IntMatrix& G) {
     int nG = G.rows();
     static FFTWPlanCache cache;
-    auto [plan_f, plan_b] = cache.get(Nx, Ny);
-    (void)plan_b;
+    const auto& e = cache.get(Nx, Ny);
 
     // s_grid (row-major), then forward FFT in place, scale by dN.
     std::vector<complex> buf(s_in_flat.begin(), s_in_flat.end());
     buf.resize((size_t)Nx * Ny);
-    fftw_execute_fwd(plan_f, buf.data());
+    fftw_execute_fwd(e.fwd, buf.data());
     for (auto& z : buf) z *= dN;
 
     // C[i,j] = s_fft[(G[i,0]-G[j,0]) mod Nx, (G[i,1]-G[j,1]) mod Ny]
@@ -110,12 +118,11 @@ ComplexVector get_fft(double dN,
                       const IntMatrix& G) {
     int nG = G.rows();
     static FFTWPlanCache cache;
-    auto [plan_f, plan_b] = cache.get(Nx, Ny);
-    (void)plan_b;
+    const auto& e = cache.get(Nx, Ny);
 
     std::vector<complex> buf(s_in_flat.begin(), s_in_flat.end());
     buf.resize((size_t)Nx * Ny);
-    fftw_execute_fwd(plan_f, buf.data());
+    fftw_execute_fwd(e.fwd, buf.data());
     for (auto& z : buf) z *= dN;
 
     ComplexVector out(nG);
@@ -132,8 +139,7 @@ GridMatrix get_ifft(double dN, int Nx, int Ny,
                     const IntMatrix& G) {
     int nG = G.rows();
     static FFTWPlanCache cache;
-    auto [plan_f, plan_b] = cache.get(Nx, Ny);
-    (void)plan_f;
+    const auto& e = cache.get(Nx, Ny);
 
     // Scatter s_in at positions G[i] (with wrap), zero elsewhere.
     std::vector<complex> buf((size_t)Nx * Ny, complex(0.0, 0.0));
@@ -142,7 +148,7 @@ GridMatrix get_ifft(double dN, int Nx, int Ny,
         int c = ((G(i,1) % Ny) + Ny) % Ny;
         buf[(size_t)r * Ny + c] += s_in(i);
     }
-    fftw_execute_bwd(plan_b, buf.data());
+    fftw_execute_bwd(e.bwd, buf.data());
 
     // FFTW backward doesn't normalize; divide by Nx*Ny. Also divide by dN
     // to match Python convention (s_out /= dN where dN = 1/(Nx*Ny)).

@@ -83,6 +83,14 @@ void RCWA::Init_Setup(double Pscale, int Gmethod) {
     complex ky0 = omega_ * std::sin(theta_) * std::sin(phi_) * std::sqrt(eps0);
     Lattice_SetKs(G_, kx0, ky0, Lk1_, Lk2_, kx_, ky_);
 
+    // The quasi-1D uniform-layer S-matrix is block-diagonal with 2×2 (Ex,Ey)
+    // blocks per harmonic for ANY ky0: kp is block-diagonal (off-diagonal Ex-Ey
+    // coupling ∝ kx·ky appears when ky0≠0), q is duplicated [q;q], phi=I. So
+    // the per-harmonic 2×2 recursion below is exact and always usable. When
+    // ky0==0 the blocks are diagonal, and the cheaper scalar recursion applies.
+    quasi1d_fastpath_ = quasi1d_;
+    quasi1d_diagonal_ = quasi1d_ && (std::abs(ky0) < 1e-12 * std::abs(omega_));
+
     // Per-layer kp/q/phi for uniform layers. Patterned layers are filled
     // in GridLayer_geteps().
     int nLayers = Layer_N();
@@ -327,13 +335,15 @@ void RCWA::GetSMatrix(int indi, int indj,
     };
 
     // ── quasi-1D fast path ──
-    // With the 1D harmonic set (j==0) every uniform-layer kp/q/phi is diagonal,
-    // so the S-matrix of an all-uniform layer range is exactly diagonal. Split
-    // the stack at the start of the trailing uniform suffix: compute the (grid
-    // + interface) prefix with the general sequential loop, the uniform suffix
-    // with a scalar (per-harmonic) recursion, then assemble with the
-    // overlapping-cascade formula.
-    if (quasi1d_) {
+    // With the 1D harmonic set (j==0), every uniform-layer kp/q/phi is
+    // block-diagonal with 2×2 (Ex,Ey) blocks per harmonic (exact for any ky0).
+    // So the S-matrix of an all-uniform layer range is block-diagonal 2×2, and
+    // the Redheffer recursion factorizes per harmonic. Split the stack at the
+    // start of the trailing uniform suffix: compute the (grid + interface)
+    // prefix with the general sequential loop, the uniform suffix with a 2×2
+    // per-harmonic recursion, then assemble with the overlapping-cascade
+    // formula.
+    if (quasi1d_fastpath_) {
         int m = indj;
         while (m >= indi && layer_types_[m] == LayerType::Uniform) --m;
         ++m;   // layers [m, indj] are all uniform (if m <= indj)
@@ -345,35 +355,95 @@ void RCWA::GetSMatrix(int indi, int indj,
             ComplexMatrix L21 = ComplexMatrix::Zero(n2, n2);
             for (int l = indi; l < m; ++l) step(l, L11, L12, L21, L22);
 
-            // R = S(m, indj) — all-uniform suffix, diagonal. Scalar recursion
-            // over the 2nG harmonics.
-            ComplexVector r11 = ComplexVector::Ones(n2);
-            ComplexVector r22 = ComplexVector::Ones(n2);
-            ComplexVector r12 = ComplexVector::Zero(n2);
-            ComplexVector r21 = ComplexVector::Zero(n2);
-            for (int l = m; l < indj; ++l) {
-                int lp1 = l + 1;
-                const ComplexVector& ql = q_list_[l];
-                const ComplexVector& qb = q_list_[lp1];
-                for (int h = 0; h < n2; ++h) {
-                    complex d1 = std::exp(complex(0, 1) * ql(h) * thickness_[l]);
-                    complex d2 = std::exp(complex(0, 1) * qb(h) * thickness_[lp1]);
-                    complex kl = kp_list_[l](h, h), kb = kp_list_[lp1](h, h);
-                    complex P = (ql(h) / kl) * (kb / qb(h));
-                    complex T11 = 0.5 * (complex(1, 0) + P);
-                    complex T12 = 0.5 * (complex(1, 0) - P);
-                    complex P1m = T11 - d1 * r12(h) * T12;
-                    complex ns11 = d1 * r11(h) / P1m;
-                    complex ns12 = (d1 * r12(h) * T11 - T12) * d2 / P1m;
-                    complex ns21 = r21(h) + r22(h) * T12 * ns11;
-                    complex ns22 = r22(h) * (T11 * d2 + T12 * ns12);
-                    r11(h) = ns11; r12(h) = ns12; r21(h) = ns21; r22(h) = ns22;
+            // R = S(m, indj) — all-uniform suffix. For each harmonic h the
+            // 2×2 block couples (Ex_h, Ey_h) only, so run a per-harmonic
+            // recursion instead of the full (2nG)² matrices. The block of kp
+            // for harmonic h is kp(h,h), kp(h,nG+h), kp(nG+h,h), kp(nG+h,nG+h)
+            // and q is duplicated (q(h) == q(nG+h)), phi = I. When ky0==0 the
+            // 2×2 blocks are diagonal and the cheaper scalar recursion applies.
+            ComplexMatrix R11, R12, R21, R22;
+            if (quasi1d_diagonal_) {
+                ComplexVector r11 = ComplexVector::Ones(n2);
+                ComplexVector r22 = ComplexVector::Ones(n2);
+                ComplexVector r12 = ComplexVector::Zero(n2);
+                ComplexVector r21 = ComplexVector::Zero(n2);
+                for (int l = m; l < indj; ++l) {
+                    int lp1 = l + 1;
+                    const ComplexVector& ql = q_list_[l];
+                    const ComplexVector& qb = q_list_[lp1];
+                    for (int h = 0; h < n2; ++h) {
+                        complex d1 = std::exp(complex(0, 1) * ql(h) * thickness_[l]);
+                        complex d2 = std::exp(complex(0, 1) * qb(h) * thickness_[lp1]);
+                        complex kl = kp_list_[l](h, h), kb = kp_list_[lp1](h, h);
+                        complex P = (ql(h) / kl) * (kb / qb(h));
+                        complex T11 = 0.5 * (complex(1, 0) + P);
+                        complex T12 = 0.5 * (complex(1, 0) - P);
+                        complex P1m = T11 - d1 * r12(h) * T12;
+                        complex ns11 = d1 * r11(h) / P1m;
+                        complex ns12 = (d1 * r12(h) * T11 - T12) * d2 / P1m;
+                        complex ns21 = r21(h) + r22(h) * T12 * ns11;
+                        complex ns22 = r22(h) * (T11 * d2 + T12 * ns12);
+                        r11(h) = ns11; r12(h) = ns12; r21(h) = ns21; r22(h) = ns22;
+                    }
                 }
+                R11 = r11.asDiagonal();
+                R12 = r12.asDiagonal();
+                R21 = r21.asDiagonal();
+                R22 = r22.asDiagonal();
+            } else {
+                using M2 = Eigen::Matrix<complex, 2, 2>;
+                std::vector<M2> r11(nG_), r12(nG_), r21(nG_), r22(nG_);
+                const M2 I2 = M2::Identity();
+                const M2 Z2 = M2::Zero();
+                for (int h = 0; h < nG_; ++h) {
+                    r11[h] = I2; r22[h] = I2; r12[h] = Z2; r21[h] = Z2;
+                }
+                for (int l = m; l < indj; ++l) {
+                    int lp1 = l + 1;
+                    const ComplexVector& ql = q_list_[l];
+                    const ComplexVector& qb = q_list_[lp1];
+                    const ComplexMatrix& kpl = kp_list_[l];
+                    const ComplexMatrix& kpb = kp_list_[lp1];
+                    const double tl = thickness_[l], tb = thickness_[lp1];
+                    for (int h = 0; h < nG_; ++h) {
+                        complex d1 = std::exp(complex(0, 1) * ql(h) * tl);
+                        complex d2 = std::exp(complex(0, 1) * qb(h) * tb);
+                        M2 Kl, Kb;
+                        Kl << kpl(h, h),       kpl(h, nG_ + h),
+                              kpl(nG_ + h, h),  kpl(nG_ + h, nG_ + h);
+                        Kb << kpb(h, h),       kpb(h, nG_ + h),
+                              kpb(nG_ + h, h),  kpb(nG_ + h, nG_ + h);
+                        // P = q_l·kp_l⁻¹·kp_lp1·q_lp1⁻¹ (2×2), q scalar per harmonic.
+                        M2 P = (ql(h) / qb(h)) * Kl.inverse() * Kb;
+                        M2 T11 = 0.5 * (I2 + P);
+                        M2 T12 = 0.5 * (I2 - P);
+                        M2 P1m = T11 - d1 * r12[h] * T12;
+                        M2 P1m_inv = P1m.inverse();
+                        M2 ns11 = d1 * r11[h] * P1m_inv;
+                        M2 ns12 = (d1 * r12[h] * T11 - T12) * d2 * P1m_inv;
+                        M2 ns21 = r21[h] + r22[h] * T12 * ns11;
+                        M2 ns22 = r22[h] * (T11 * d2 + T12 * ns12);
+                        r11[h] = ns11; r12[h] = ns12; r21[h] = ns21; r22[h] = ns22;
+                    }
+                }
+                // Scatter the per-harmonic 2×2 blocks into block-diagonal (2nG)²
+                // matrices (ordering [Ex_0..Ex_{nG-1}, Ey_0..Ey_{nG-1}]).
+                auto scatter = [&](const std::vector<M2>& v) {
+                    ComplexMatrix out = ComplexMatrix::Zero(n2, n2);
+                    for (int h = 0; h < nG_; ++h) {
+                        out(h, h)             = v[h](0, 0);
+                        out(h, nG_ + h)       = v[h](0, 1);
+                        out(nG_ + h, h)       = v[h](1, 0);
+                        out(nG_ + h, nG_ + h) = v[h](1, 1);
+                    }
+                    return out;
+                };
+                R11 = scatter(r11);
+                R12 = scatter(r12);
+                R21 = scatter(r21);
+                R22 = scatter(r22);
             }
-            ComplexMatrix R11 = r11.asDiagonal();
-            ComplexMatrix R12 = r12.asDiagonal();
-            ComplexMatrix R21 = r21.asDiagonal();
-            ComplexMatrix R22 = r22.asDiagonal();
+
 
             // Overlapping cascade: L = S(indi, m), R = S(m, indj) share layer m.
             // M = inv(I - L12·R21); S11=R11·M·L11, S12=R11·M·L12·R22+R12,

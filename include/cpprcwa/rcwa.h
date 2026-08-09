@@ -129,6 +129,12 @@ private:
     Eigen::Vector2d L1_, L2_;
     double theta_, phi_;
     bool quasi1d_ = false;             // restrict harmonic set to j==0 (see RCWAConfig)
+    bool quasi1d_fastpath_ = false;    // quasi-1d: uniform-layer S-matrix is
+                                       // block-diagonal (2×2 per harmonic), so the
+                                       // per-harmonic recursion is exact for any ky0.
+    bool quasi1d_diagonal_ = false;    // quasi-1d AND ky0==0: uniform-layer kp is
+                                       // diagonal, so the (cheaper) scalar
+                                       // per-harmonic recursion applies.
     double normalization_ = 1.0;
     Direction direction_ = Direction::Forward;
 
