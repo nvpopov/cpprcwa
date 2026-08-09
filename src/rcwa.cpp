@@ -544,6 +544,61 @@ void RCWA::GetSMatrix(int indi, int indj,
         s22 = std::move(new_S22);
     };
 
+    // Block-diagonality check: are the off-diagonal nG×nG blocks of M ~zero?
+    // (True at ky0=0 for quasi-1D gratings and D4-symmetric patterns.)
+    auto is_block_diag = [&](const ComplexMatrix& M) {
+        double off = 0.0, on = 0.0;
+        for (int i = 0; i < nG_; ++i)
+            for (int j = 0; j < nG_; ++j) {
+                off = std::max(off, std::abs(M(i, nG_ + j)));
+                off = std::max(off, std::abs(M(nG_ + i, j)));
+                on  = std::max(on,  std::abs(M(i, j)));
+                on  = std::max(on,  std::abs(M(nG_ + i, nG_ + j)));
+            }
+        return off <= 1e-10 * on + 1e-30;
+    };
+
+    // Same Redheffer star step, but for ONE polarization block (p∈{0,1}) of the
+    // block-diagonal (kp, phi, q) at ky0=0 — operates on nG×nG blocks (4× fewer
+    // flops). Used by the TE/TM-decoupled quasi-1D path.
+    auto bstep = [&](int l, int p, ComplexMatrix& s11, ComplexMatrix& s12,
+                     ComplexMatrix& s21, ComplexMatrix& s22) {
+        int lp1 = l + 1;
+        int nb = nG_;
+        ComplexVector d1 = (complex(0,1) * q(l).segment(p*nb, nb) * thickness_[l]).array().exp().matrix();
+        ComplexVector d2 = (complex(0,1) * q(lp1).segment(p*nb, nb) * thickness_[lp1]).array().exp().matrix();
+        ComplexMatrix phil   = ph(l).block(p*nb, p*nb, nb, nb);
+        ComplexMatrix philp1 = ph(lp1).block(p*nb, p*nb, nb, nb);
+        ComplexMatrix kpl    = kp(l).block(p*nb, p*nb, nb, nb);
+        ComplexMatrix kplp1  = kp(lp1).block(p*nb, p*nb, nb, nb);
+        // General interface (no uniform-pair cache in the block path).
+        ComplexMatrix Q = internal::zinverse(phil) * philp1;
+        ComplexMatrix kpphi_l_inv = internal::zinverse(kpl * phil);
+        ComplexVector qinv = q(lp1).segment(p*nb, nb).cwiseInverse();
+        ComplexMatrix P = q(l).segment(p*nb, nb).asDiagonal() * kpphi_l_inv
+                          * kplp1 * philp1 * qinv.asDiagonal();
+        ComplexMatrix T11 = 0.5 * (Q + P);
+        ComplexMatrix T12 = 0.5 * (Q - P);
+        ComplexMatrix d1S12 = d1.asDiagonal() * s12;
+        ComplexMatrix P1m = T11 - d1S12 * T12;
+        std::vector<int> piv = internal::zgetrf_factor(nb, P1m.data(),
+                                                       (int)P1m.outerStride());
+        ComplexMatrix new_S11 = d1.asDiagonal() * s11;
+        internal::zgetrs_solve(nb, nb, P1m.data(), (int)P1m.outerStride(),
+                               piv.data(), new_S11.data(), (int)new_S11.outerStride());
+        ComplexMatrix P2 = d1S12 * T11 - T12;
+        ComplexMatrix new_S12 = P2 * d2.asDiagonal();
+        internal::zgetrs_solve(nb, nb, P1m.data(), (int)P1m.outerStride(),
+                               piv.data(), new_S12.data(), (int)new_S12.outerStride());
+        ComplexMatrix S22T12 = s22 * T12;
+        ComplexMatrix new_S21 = s21 + S22T12 * new_S11;
+        ComplexMatrix new_S22 = s22 * T11 * d2.asDiagonal() + S22T12 * new_S12;
+        s11 = std::move(new_S11);
+        s12 = std::move(new_S12);
+        s21 = std::move(new_S21);
+        s22 = std::move(new_S22);
+    };
+
     // ── quasi-1D fast path ──
     // With the 1D harmonic set (j==0), every uniform-layer kp/q/phi is
     // block-diagonal with 2×2 (Ex,Ey) blocks per harmonic (exact for any ky0).
@@ -558,8 +613,84 @@ void RCWA::GetSMatrix(int indi, int indj,
         while (m >= indi && layer_types_[m] == LayerType::Uniform) --m;
         ++m;   // layers [m, indj] are all uniform (if m <= indj)
         if (m <= indj) {
-            // L = S(indi, m) — general prefix (may contain patterned layers).
             auto tt0 = std::chrono::steady_clock::now();
+
+            // ── TE/TM block-decoupled path (ky0=0) ──
+            // When quasi1d_diagonal_ (ky0==0) AND every prefix layer's kp/phi
+            // is block-diagonal (2× nG blocks), the whole S-matrix is
+            // block-diagonal: the prefix interfaces and the cascade decouple
+            // into two independent nG×nG (TE and TM) problems. The uniform
+            // suffix is scalar per harmonic (both blocks in one pass).
+            bool prefix_block_diag = quasi1d_diagonal_;
+            if (prefix_block_diag) {
+                for (int l = indi; l < m; ++l)
+                    if (!is_block_diag(kp(l)) || !is_block_diag(ph(l))) {
+                        prefix_block_diag = false;
+                        break;
+                    }
+            }
+            if (prefix_block_diag) {
+                ComplexVector r11 = ComplexVector::Ones(n2);
+                ComplexVector r22 = ComplexVector::Ones(n2);
+                ComplexVector r12 = ComplexVector::Zero(n2);
+                ComplexVector r21 = ComplexVector::Zero(n2);
+                for (int l = m; l < indj; ++l) {
+                    int lp1 = l + 1;
+                    const ComplexVector& ql = q(l);
+                    const ComplexVector& qb = q(lp1);
+                    for (int h = 0; h < n2; ++h) {
+                        complex d1 = std::exp(complex(0, 1) * ql(h) * thickness_[l]);
+                        complex d2 = std::exp(complex(0, 1) * qb(h) * thickness_[lp1]);
+                        complex kl = kp(l)(h, h), kb = kp(lp1)(h, h);
+                        complex P = (ql(h) / kl) * (kb / qb(h));
+                        complex T11 = 0.5 * (complex(1, 0) + P);
+                        complex T12 = 0.5 * (complex(1, 0) - P);
+                        complex P1m = T11 - d1 * r12(h) * T12;
+                        complex ns11 = d1 * r11(h) / P1m;
+                        complex ns12 = (d1 * r12(h) * T11 - T12) * d2 / P1m;
+                        complex ns21 = r21(h) + r22(h) * T12 * ns11;
+                        complex ns22 = r22(h) * (T11 * d2 + T12 * ns12);
+                        r11(h) = ns11; r12(h) = ns12; r21(h) = ns21; r22(h) = ns22;
+                    }
+                }
+                auto tt1 = std::chrono::steady_clock::now();
+                ComplexMatrix S11r = ComplexMatrix::Zero(n2, n2);
+                ComplexMatrix S22r = ComplexMatrix::Zero(n2, n2);
+                ComplexMatrix S12r = ComplexMatrix::Zero(n2, n2);
+                ComplexMatrix S21r = ComplexMatrix::Zero(n2, n2);
+                for (int p = 0; p < 2; ++p) {
+                    const int nb = nG_;
+                    ComplexMatrix L11 = ComplexMatrix::Identity(nb, nb);
+                    ComplexMatrix L22 = ComplexMatrix::Identity(nb, nb);
+                    ComplexMatrix L12 = ComplexMatrix::Zero(nb, nb);
+                    ComplexMatrix L21 = ComplexMatrix::Zero(nb, nb);
+                    for (int l = indi; l < m; ++l) bstep(l, p, L11, L12, L21, L22);
+                    ComplexMatrix R11 = r11.segment(p * nb, nb).asDiagonal();
+                    ComplexMatrix R22 = r22.segment(p * nb, nb).asDiagonal();
+                    ComplexMatrix R12 = r12.segment(p * nb, nb).asDiagonal();
+                    ComplexMatrix R21 = r21.segment(p * nb, nb).asDiagonal();
+                    ComplexMatrix Sp11, Sp12, Sp21, Sp22;
+                    redheffer_cascade(L11, L12, L21, L22, R11, R12, R21, R22,
+                                      Sp11, Sp12, Sp21, Sp22);
+                    S11r.block(p * nb, p * nb, nb, nb) = Sp11;
+                    S12r.block(p * nb, p * nb, nb, nb) = Sp12;
+                    S21r.block(p * nb, p * nb, nb, nb) = Sp21;
+                    S22r.block(p * nb, p * nb, nb, nb) = Sp22;
+                }
+                S11 = std::move(S11r); S12 = std::move(S12r);
+                S21 = std::move(S21r); S22 = std::move(S22r);
+                if (std::getenv("CPPRCWA_TIMING")) {
+                    using ms = std::chrono::duration<double, std::milli>;
+                    std::fprintf(stderr, "[S] TE/TM-decoupled: suffix=%.1f prefix+cascade=%.1f ms\n",
+                                 ms(tt1-tt0).count(),
+                                 ms(std::chrono::steady_clock::now()-tt1).count());
+                }
+                smatrix_cache_ = {indi, indj, S11, S12, S21, S22};
+                return;
+            }
+
+            // ── General quasi-1D path (full 2nG prefix, per-harmonic suffix) ──
+            // L = S(indi, m) — general prefix (may contain patterned layers).
             ComplexMatrix L11 = ComplexMatrix::Identity(n2, n2);
             ComplexMatrix L22 = ComplexMatrix::Identity(n2, n2);
             ComplexMatrix L12 = ComplexMatrix::Zero(n2, n2);
@@ -577,9 +708,7 @@ void RCWA::GetSMatrix(int indi, int indj,
 
             // R = S(m, indj) — all-uniform suffix. For each harmonic h the
             // 2×2 block couples (Ex_h, Ey_h) only, so run a per-harmonic
-            // recursion instead of the full (2nG)² matrices. The block of kp
-            // for harmonic h is kp(h,h), kp(h,nG+h), kp(nG+h,h), kp(nG+h,nG+h)
-            // and q is duplicated (q(h) == q(nG+h)), phi = I. When ky0==0 the
+            // recursion instead of the full (2nG)² matrices. When ky0==0 the
             // 2×2 blocks are diagonal and the cheaper scalar recursion applies.
             ComplexMatrix R11, R12, R21, R22;
             if (quasi1d_diagonal_) {

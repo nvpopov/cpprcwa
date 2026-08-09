@@ -696,6 +696,10 @@ pipeline) while matching every reflected order and the real-space field to
   zero off-diagonal blocks (quasi-1D normal incidence; D4-symmetric 2D at
   normal incidence) → two nG×nG `zgeev`s instead of one 2nG×2nG (4× flops).
 - **S-matrix memoization** — no redundant S(0, N-1) rebuild for field calls.
+- **TE/TM block-decoupled quasi-1D path** (ky0=0, QUASI-1D NORMAL): with
+  block-diagonal kp/phi/q the grid-interface prefix and cascade run
+  per-polarization on nG×nG blocks (`bstep`), 4× fewer flops; identical to
+  the general path to ~4e-15. Oblique (φ≠0°) falls back to the general path.
 
 Measured `rt_solve` (system under load, indicative) — mode-explicit:
 **FULL-2D NORMAL** (θ=0°,φ=0°) nG=97 963→~300 ms, nG=201 6420→~1500 ms

@@ -103,6 +103,13 @@ tolerance and matches grcwa's `ex1.py`/`ex2.py`/`ex4.py` to printed precision.
 - **S-matrix memoization**: the most recent `GetSMatrix(indi, indj)` result is
   cached; the RT_Solve → field-reconstruction pattern no longer rebuilds
   S(0, N-1). Invalidated on `Init_Setup`/`GridLayer_geteps`.
+- **TE/TM block-decoupled quasi-1D path (ky0=0)**: at normal incidence every
+  layer's kp/phi/q is block-diagonal (2× nG blocks), so the grid-interface
+  prefix and the cascade are run per-polarization on nG×nG blocks (`bstep`)
+  instead of full 2nG matrices — 4× fewer flops each. Verified identical to
+  the general path to ~4e-15. QUASI-1D NORMAL rt_solve: 559→202 ms (nG=253),
+  1441→452 ms (nG=359). Oblique (φ≠0°) correctly falls back to the general
+  path (off-diagonal Ex–Ey coupling ∝ ky0).
 
 **Notable bugs found and fixed during the port:**
 - Uninitialized Eigen matrices (`Jk`, `k_mat`) — off-diagonal garbage polluted
