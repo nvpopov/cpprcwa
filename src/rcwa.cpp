@@ -53,6 +53,7 @@ void RCWA::Add_LayerGrid(double thickness, int Nx, int Ny) {
 void RCWA::Init_Setup(double Pscale, int Gmethod) {
     Pscale_ = Pscale;
     Gmethod_ = Gmethod;
+    smatrix_cache_ = SMatrixCache{};   // nG / layer structure may change
 
     if (layer_types_.empty() || layer_types_[0] != LayerType::Uniform)
         throw error::ConfigError("layer 0 must be Uniform (rcwa.py:89-103)");
@@ -145,8 +146,7 @@ void RCWA::Init_Setup(double Pscale, int Gmethod) {
     if (report_memory_) PrintMemoryReport();
 }
 
-void RCWA::PrintMemoryReport() const {
-    const int64_t cplx = static_cast<int64_t>(sizeof(complex));      // 16
+void RCWA::PrintMemoryReport() const {    const int64_t cplx = static_cast<int64_t>(sizeof(complex));      // 16
     const int64_t n    = nG_;
     const int64_t n2   = 2 * n;
     const int64_t full_mat = n2 * n2 * cplx;   // bytes per 2nG×2nG complex matrix
@@ -278,6 +278,7 @@ void RCWA::MakeExcitationPlanewave(const PlaneWaveExcitation& exc) {
 void RCWA::GridLayer_geteps(const std::vector<complex>& ep_all_isotropic) {
     int grid_idx = 0;
     size_t offset = 0;
+    smatrix_cache_ = SMatrixCache{};   // patterned-layer eps changed
     for (int li = 0; li < Layer_N(); ++li) {
         if (layer_types_[li] != LayerType::Grid) continue;
         auto [Nx, Ny] = grid_Nxy_[grid_idx];
@@ -376,27 +377,94 @@ void RCWA::SolveLayerEigensystem_patterned(complex omega, const ComplexVector& k
     ComplexMatrix kkT = k_mat * k_mat.transpose();
     ComplexMatrix M = ep2 * kp - kkT;
     auto tt1 = std::chrono::steady_clock::now();
-    ComplexVector evals(n2);
+
+    // Block-diagonal M detection (quasi-1D gratings at normal incidence,
+    // ky0=0): M = diag(C·ω²−diag(kx²), C·(ω²I−diag(kx)epinv diag(kx))) — the
+    // off-diagonal nG×nG blocks vanish exactly, decoupling the 2nG eigenproblem
+    // into two nG ones (4× fewer zgeev flops). Falls back to the full 2nG
+    // solve otherwise.
+    double off = 0.0, on = 0.0;
+    for (int i = 0; i < nG; ++i) {
+        for (int j = 0; j < nG; ++j) {
+            off = std::max(off, std::abs(M(i, nG + j)));
+            off = std::max(off, std::abs(M(nG + i, j)));
+            on  = std::max(on,  std::abs(M(i, j)));
+            on  = std::max(on,  std::abs(M(nG + i, nG + j)));
+        }
+    }
+    q.resize(n2);
     phi.resize(n2, n2);
-    internal::zgeev(n2, M.data(), (int)M.outerStride(), evals,
-                    phi.data(), (int)phi.outerStride());
+    const bool block_diag = (off <= 1e-10 * on + 1e-30);
+    if (block_diag) {
+        ComplexVector ev1(nG), ev2(nG);
+        ComplexMatrix ph1(nG, nG), ph2(nG, nG);
+        ComplexMatrix M1 = M.topLeftCorner(nG, nG);
+        ComplexMatrix M2 = M.bottomRightCorner(nG, nG);
+        internal::zgeev(nG, M1.data(), (int)M1.outerStride(), ev1,
+                        ph1.data(), (int)ph1.outerStride());
+        internal::zgeev(nG, M2.data(), (int)M2.outerStride(), ev2,
+                        ph2.data(), (int)ph2.outerStride());
+        q.head(nG) = ev1;
+        q.tail(nG) = ev2;
+        phi.setZero(n2, n2);
+        phi.topLeftCorner(nG, nG)     = ph1;
+        phi.bottomRightCorner(nG, nG) = ph2;
+    } else {
+        ComplexVector evals(n2);
+        internal::zgeev(n2, M.data(), (int)M.outerStride(), evals,
+                        phi.data(), (int)phi.outerStride());
+        q = evals;
+    }
     auto tt2 = std::chrono::steady_clock::now();
     if (std::getenv("CPPRCWA_TIMING")) {
         using ms = std::chrono::duration<double, std::milli>;
-        std::fprintf(stderr, "[eig] buildM=%.1f zgeev=%.1f ms\n",
-                     ms(tt1-tt0).count(), ms(tt2-tt1).count());
+        std::fprintf(stderr, "[eig] buildM=%.1f zgeev=%.1f ms%s\n",
+                     ms(tt1-tt0).count(), ms(tt2-tt1).count(),
+                     block_diag ? " (block-diag)" : "");
     }
     // q = sqrt(evals) with branch cut
-    for (int i = 0; i < n2; ++i) evals(i) = std::sqrt(evals(i));
-    q = apply_branch_cut(evals);
+    for (int i = 0; i < n2; ++i) q(i) = std::sqrt(q(i));
+    q = apply_branch_cut(q);
 }
 
 // ── S-matrix (Phase 5 — stub for now) ───────────────────────────────────────
+
+// Redheffer combination of S_L = S(indi, m) and S_R = S(m, indj), which SHARE
+// the boundary layer m (the "overlapping cascade" — identical to the formula
+// used by the quasi-1D fast path and validated to ~1e-13 vs grcwa). Returns
+// S(indi, indj). Used by the periodic uniform-suffix exponentiation.
+namespace {
+void redheffer_cascade(const ComplexMatrix& L11, const ComplexMatrix& L12,
+                       const ComplexMatrix& L21, const ComplexMatrix& L22,
+                       const ComplexMatrix& R11, const ComplexMatrix& R12,
+                       const ComplexMatrix& R21, const ComplexMatrix& R22,
+                       ComplexMatrix& S11, ComplexMatrix& S12,
+                       ComplexMatrix& S21, ComplexMatrix& S22) {
+    int n2 = (int)L11.rows();
+    ComplexMatrix M = internal::zinverse(
+        ComplexMatrix::Identity(n2, n2) - L12 * R21);
+    ComplexMatrix ML11 = M * L11;
+    ComplexMatrix ML12R22 = M * (L12 * R22);
+    S11 = R11 * ML11;
+    S12 = R11 * ML12R22 + R12;
+    S21 = L21 + L22 * (R21 * ML11);
+    S22 = L22 * (R21 * ML12R22) + L22 * R22;
+}
+} // namespace
 
 void RCWA::GetSMatrix(int indi, int indj,
                       ComplexMatrix& S11, ComplexMatrix& S12,
                       ComplexMatrix& S21, ComplexMatrix& S22) {
     int n2 = 2 * nG_;
+    // Memoize the most recent (non-trivial) range: RT_Solve then field
+    // reconstruction both ask for S(0, Layer_N-1).
+    if (smatrix_cache_.indi == indi && smatrix_cache_.indj == indj) {
+        S11 = smatrix_cache_.S11;
+        S12 = smatrix_cache_.S12;
+        S21 = smatrix_cache_.S21;
+        S22 = smatrix_cache_.S22;
+        return;
+    }
     if (indi == indj) {
         S11 = ComplexMatrix::Identity(n2, n2);
         S22 = ComplexMatrix::Identity(n2, n2);
@@ -414,8 +482,11 @@ void RCWA::GetSMatrix(int indi, int indj,
             layer_types_[lp1] == LayerType::Uniform;
 
         ComplexMatrix T11, T12;
-        ComplexMatrix d1 = (complex(0,1) * q(l)   * thickness_[l]  ).array().exp().matrix().asDiagonal();
-        ComplexMatrix d2 = (complex(0,1) * q(lp1) * thickness_[lp1]).array().exp().matrix().asDiagonal();
+        // Phase factors are DIAGONAL: keep them as vectors and scale with
+        // .asDiagonal() (O(n²) row/column scaling) instead of dense matrices
+        // (which would make d1·s12 a full O(n³) product).
+        ComplexVector d1 = (complex(0,1) * q(l)   * thickness_[l]  ).array().exp().matrix();
+        ComplexVector d2 = (complex(0,1) * q(lp1) * thickness_[lp1]).array().exp().matrix();
 
         if (uniform_pair) {
             // phi = I for uniform layers → Q = I. Cache T11/T12 per (eps_l, eps_lp1).
@@ -448,25 +519,25 @@ void RCWA::GetSMatrix(int indi, int indj,
         // Common subexpressions d1·S12 and S22·T12 are computed once; the
         // inv(P1m) products are replaced by one LU factorization + two
         // back-substitutions.
-        ComplexMatrix d1S12 = d1 * s12;                      // O(n²) (d1 diagonal)
-        ComplexMatrix P1m = T11 - d1S12 * T12;               // 1 full matmul
+        ComplexMatrix d1S12 = d1.asDiagonal() * s12;             // O(n²) (d1 diagonal)
+        ComplexMatrix P1m = T11 - d1S12 * T12;                   // 1 full matmul
         std::vector<int> piv = internal::zgetrf_factor(n2, P1m.data(),
                                                        static_cast<int>(P1m.outerStride()));
 
-        ComplexMatrix new_S11 = d1 * s11;                    // O(n²)
+        ComplexMatrix new_S11 = d1.asDiagonal() * s11;           // O(n²)
         internal::zgetrs_solve(n2, n2, P1m.data(), static_cast<int>(P1m.outerStride()),
                                piv.data(), new_S11.data(),
                                static_cast<int>(new_S11.outerStride()));
 
-        ComplexMatrix P2 = d1S12 * T11 - T12;                // 1 full matmul
-        ComplexMatrix new_S12 = P2 * d2;                     // O(n²)
+        ComplexMatrix P2 = d1S12 * T11 - T12;                    // 1 full matmul
+        ComplexMatrix new_S12 = P2 * d2.asDiagonal();            // O(n²)
         internal::zgetrs_solve(n2, n2, P1m.data(), static_cast<int>(P1m.outerStride()),
                                piv.data(), new_S12.data(),
                                static_cast<int>(new_S12.outerStride()));
 
-        ComplexMatrix S22T12 = s22 * T12;                    // 1 full matmul
-        ComplexMatrix new_S21 = s21 + S22T12 * new_S11;      // 1 full matmul
-        ComplexMatrix new_S22 = s22 * T11 * d2 + S22T12 * new_S12;  // 2 full matmuls
+        ComplexMatrix S22T12 = s22 * T12;                        // 1 full matmul
+        ComplexMatrix new_S21 = s21 + S22T12 * new_S11;          // 1 full matmul
+        ComplexMatrix new_S22 = s22 * T11 * d2.asDiagonal() + S22T12 * new_S12;  // 1 full matmul + O(n²)
         s11 = std::move(new_S11);
         s12 = std::move(new_S12);
         s21 = std::move(new_S21);
@@ -611,17 +682,138 @@ void RCWA::GetSMatrix(int indi, int indj,
                              ms(tt1-tt0).count(), ms(tt2-tt1).count(),
                              ms(std::chrono::steady_clock::now()-tt2).count());
             }
+            smatrix_cache_ = {indi, indj, S11, S12, S21, S22};
             return;
         }
     }
 
-    // ── General sequential path ──
+    // ── General sequential path (with periodic uniform-suffix acceleration) ──
     S11 = ComplexMatrix::Identity(n2, n2);
     S22 = ComplexMatrix::Identity(n2, n2);
     S12 = ComplexMatrix::Zero(n2, n2);
     S21 = ComplexMatrix::Zero(n2, n2);
-    for (int l = indi; l < indj; ++l)
-        step(l, S11, S12, S21, S22);
+
+    auto g0 = std::chrono::steady_clock::now();
+    auto build_seq = [&](int a, int b, ComplexMatrix& s11, ComplexMatrix& s12,
+                         ComplexMatrix& s21, ComplexMatrix& s22) {
+        s11 = ComplexMatrix::Identity(n2, n2);
+        s22 = ComplexMatrix::Identity(n2, n2);
+        s12 = ComplexMatrix::Zero(n2, n2);
+        s21 = ComplexMatrix::Zero(n2, n2);
+        for (int l = a; l < b; ++l) step(l, s11, s12, s21, s22);
+    };
+
+    // Trailing all-uniform suffix [m, indj).
+    int m = indj;
+    while (m >= indi && layer_types_[m] == LayerType::Uniform) --m;
+    ++m;
+
+    bool periodic_done = false;
+    if (m <= indj) {
+        auto layer_eq = [&](int a, int b) {
+            return layer_types_[a] == LayerType::Uniform &&
+                   layer_types_[b] == LayerType::Uniform &&
+                   thickness_[a] == thickness_[b] &&
+                   uniform_eps_[material_idx_[a]] == uniform_eps_[material_idx_[b]];
+        };
+        // Longest periodic run [s, s+R·L): period L, R repeats (e.g. 40×(Mo,Si)).
+        int best_s = -1, best_L = 0, best_R = 0;
+        for (int s = m; s < indj; ++s) {
+            for (int L = 2; L <= (indj - s) / 2; ++L) {
+                int r = 1;
+                while (s + (r + 1) * L <= indj) {
+                    bool ok = true;
+                    for (int k = 0; k < L; ++k)
+                        if (!layer_eq(s + r * L + k, s + k)) { ok = false; break; }
+                    if (!ok) break;
+                    ++r;
+                }
+                if (r >= 3 && r * L > best_R * best_L) { best_s = s; best_L = L; best_R = r; }
+            }
+        }
+        if (best_R >= 3) {
+            // One period: S(best_s, best_s+L). The period tiles best_R times
+            // (layers best_s..best_s+best_R·L), but period^R would end with a
+            // PHANTOM reference layer (the period's next starting layer), which
+            // is wrong when the run's last boundary differs (e.g. the Si
+            // substrate after the final Mo/Si period). So exponentiate
+            // period^(R-1) and cascade with the LAST period + its real
+            // boundary interface S(s+(R-1)L, s+R·L) computed directly.
+            ComplexMatrix P11, P12, P21, P22;
+            build_seq(best_s, best_s + best_L, P11, P12, P21, P22);
+            ComplexMatrix C11 = ComplexMatrix::Identity(n2, n2);
+            ComplexMatrix C22 = ComplexMatrix::Identity(n2, n2);
+            ComplexMatrix C12 = ComplexMatrix::Zero(n2, n2);
+            ComplexMatrix C21 = ComplexMatrix::Zero(n2, n2);
+            ComplexMatrix B11 = P11, B12 = P12, B21 = P21, B22 = P22;
+            int rem = best_R - 1;          // period^(best_R - 1)
+            while (rem > 0) {
+                if (rem & 1) {
+                    ComplexMatrix n11, n12, n21, n22;
+                    redheffer_cascade(C11, C12, C21, C22, B11, B12, B21, B22,
+                                      n11, n12, n21, n22);
+                    C11 = std::move(n11); C12 = std::move(n12);
+                    C21 = std::move(n21); C22 = std::move(n22);
+                }
+                rem >>= 1;
+                if (rem > 0) {
+                    ComplexMatrix b11, b12, b21, b22;
+                    redheffer_cascade(B11, B12, B21, B22, B11, B12, B21, B22,
+                                      b11, b12, b21, b22);
+                    B11 = std::move(b11); B12 = std::move(b12);
+                    B21 = std::move(b21); B22 = std::move(b22);
+                }
+            }
+            // Last period + boundary: S(s+(R-1)L, s+R·L).
+            ComplexMatrix T11c, T12c, T21c, T22c, C11o, C12o, C21o, C22o;
+            build_seq(best_s + (best_R - 1) * best_L,
+                      best_s + best_R * best_L, T11c, T12c, T21c, T22c);
+            redheffer_cascade(C11, C12, C21, C22, T11c, T12c, T21c, T22c,
+                              C11o, C12o, C21o, C22o);
+
+            // Assemble: prefix+head [indi, best_s) → core → tail.
+            ComplexMatrix Scur11 = ComplexMatrix::Identity(n2, n2);
+            ComplexMatrix Scur22 = ComplexMatrix::Identity(n2, n2);
+            ComplexMatrix Scur12 = ComplexMatrix::Zero(n2, n2);
+            ComplexMatrix Scur21 = ComplexMatrix::Zero(n2, n2);
+            if (best_s > indi) {
+                ComplexMatrix H11, H12, H21, H22;
+                build_seq(indi, best_s, H11, H12, H21, H22);
+                Scur11 = std::move(H11); Scur12 = std::move(H12);
+                Scur21 = std::move(H21); Scur22 = std::move(H22);
+            }
+            {
+                ComplexMatrix n11, n12, n21, n22;
+                redheffer_cascade(Scur11, Scur12, Scur21, Scur22,
+                                  C11o, C12o, C21o, C22o, n11, n12, n21, n22);
+                Scur11 = std::move(n11); Scur12 = std::move(n12);
+                Scur21 = std::move(n21); Scur22 = std::move(n22);
+            }
+            if (best_s + best_R * best_L < indj) {
+                ComplexMatrix T11b, T12b, T21b, T22b, n11, n12, n21, n22;
+                build_seq(best_s + best_R * best_L, indj, T11b, T12b, T21b, T22b);
+                redheffer_cascade(Scur11, Scur12, Scur21, Scur22,
+                                  T11b, T12b, T21b, T22b, n11, n12, n21, n22);
+                Scur11 = std::move(n11); Scur12 = std::move(n12);
+                Scur21 = std::move(n21); Scur22 = std::move(n22);
+            }
+            S11 = std::move(Scur11); S12 = std::move(Scur12);
+            S21 = std::move(Scur21); S22 = std::move(Scur22);
+            periodic_done = true;
+        }
+    }
+
+    if (!periodic_done) {
+        for (int l = indi; l < indj; ++l)
+            step(l, S11, S12, S21, S22);
+    }
+    if (std::getenv("CPPRCWA_TIMING")) {
+        using ms = std::chrono::duration<double, std::milli>;
+        std::fprintf(stderr, "[S] general total %.1f ms%s\n",
+                     ms(std::chrono::steady_clock::now()-g0).count(),
+                     periodic_done ? " (periodic)" : "");
+    }
+    smatrix_cache_ = {indi, indj, S11, S12, S21, S22};
 }
 
 void RCWA::SolveExterior(const ComplexVector& a0, const ComplexVector& bN,

@@ -77,6 +77,33 @@ tolerance and matches grcwa's `ex1.py`/`ex2.py`/`ex4.py` to printed precision.
   `Init_Setup` prints the estimated persistent + transient peak memory,
   validated against `/usr/bin/time -v` RSS to within ~5–9%.
 
+**Performance work (Aug 2026, part 2):**
+- **Diagonal phase factors**: `d1`/`d2` in the Redheffer star step are kept as
+  vectors and applied with `.asDiagonal()` (O(n²) row/column scaling) instead
+  of dense matrices — removes 3 full O(n³) matmuls per interface (~20% off the
+  star product).
+- **Periodic uniform-core binary exponentiation (full 2D)**: a trailing
+  uniform run that repeats a unit cell (e.g. 40×(Mo,Si)) is computed by
+  exponentiating the period S-matrix with the exact Redheffer cascade
+  (`redheffer_cascade`). The star product is associative, so `S^R` composes by
+  repeated cascade; `period^(R-1)` is then cascaded with the LAST period + its
+  real boundary interface computed directly (the earlier reverted attempt
+  failed because `S^R` ends with a phantom reference layer that mismatches the
+  substrate boundary). ~80 sequential star steps → ~10 cascade steps. Verified
+  identical to the sequential path to ~4e-15 and to grcwa. FULL-2D NORMAL
+  (θ=0°,φ=0°) EUV stack `rt_solve`: 963→~300 ms (nG=97), 6420→~1500 ms
+  (nG=201). (QUASI-1D OBLIQUE, φ≠0°, uses the full 2nG eig but the 2×2
+  per-harmonic suffix keeps the solve fast; see benchmarks/README.md.)
+- **Block-diagonal M detection** in `SolveLayerEigensystem_patterned`: when
+  the off-diagonal nG×nG blocks of `M = ep2·kp − kkT` vanish (quasi-1D
+  gratings at normal incidence, and D4-symmetric 2D patterns at normal
+  incidence — verified exactly zero), the 2nG eigenproblem decouples into two
+  nG ones (4× fewer zgeev flops). Falls back to the full 2nG solve otherwise
+  (verified: oblique quasi-1D and general patterns unaffected).
+- **S-matrix memoization**: the most recent `GetSMatrix(indi, indj)` result is
+  cached; the RT_Solve → field-reconstruction pattern no longer rebuilds
+  S(0, N-1). Invalidated on `Init_Setup`/`GridLayer_geteps`.
+
 **Notable bugs found and fixed during the port:**
 - Uninitialized Eigen matrices (`Jk`, `k_mat`) — off-diagonal garbage polluted
   the `Jk·Jkᵀ` products (manifested as NaN/inf under Catch2's heap layout).
@@ -106,10 +133,12 @@ tolerance and matches grcwa's `ex1.py`/`ex2.py`/`ex4.py` to printed precision.
   (~30× vs grcwa's 11.0 s) with machine-precision agreement (normal + oblique).
 - Net: total ~2000→~1050 ms and `rt_solve` ~1700→~810 ms (≈2×), ≈5× faster
   than grcwa overall, with machine-precision field agreement.
-- S-matrix periodic-core doubling was attempted and reverted: the naive
-  stack-recombination formula assumes a continuous boundary medium, which
-  alternating-material cores violate (drops inter-period interfaces,
-  double-counts boundary phases → ~4e-4 R error).
+- S-matrix periodic-core doubling: the FIRST attempt (naive `S^R`
+  recombination) was reverted — it ends with a phantom reference layer that
+  mismatches the boundary medium (drops inter-period interfaces, double-counts
+  boundary phases → ~4e-4 R error). The CORRECT version (Aug 2026) exponentiates
+  `period^(R-1)` and cascades with the last period's real boundary interface
+  via the exact Redheffer cascade — identical to the sequential path to ~4e-15.
 
 ---
 

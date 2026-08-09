@@ -683,13 +683,31 @@ grcwa total for the same case ≈ 5.8 s → cpprcwa ≈ **5× faster** (whole
 pipeline) while matching every reflected order and the real-space field to
 ~1e-14.
 
-**Note on S-matrix doubling:** a periodic-core binary-doubling scheme was
-implemented and then reverted — the naive S-matrix recombination assumes a
-continuous boundary medium, which is violated by alternating-material stacks
-(the inter-period interfaces are dropped and boundary phases double-counted),
-giving a small (~4e-4) reflectivity error. Making it correct requires
-accounting for inter-period interfaces in the recombination; left as future
-work.
+**Aug 2026 round 2 (periodic stacks / quasi-1D):**
+- **Diagonal phase factors** (`d1`/`d2` as vectors, `.asDiagonal()` scaling)
+  remove 3 O(n³) matmuls per Redheffer step.
+- **Periodic uniform-core binary exponentiation** (full 2D): the 40×(Mo,Si)
+  suffix is `period^(R-1)` + the last period's real boundary interface,
+  assembled with the exact Redheffer cascade (`redheffer_cascade`). Identical
+  to the sequential path to ~4e-15. (The earlier naive `S^R` doubling was
+  wrong — it ends with a phantom reference layer that mismatches the substrate
+  boundary.)
+- **Block-diagonal M detection** in the patterned eigensolver: exactly
+  zero off-diagonal blocks (quasi-1D normal incidence; D4-symmetric 2D at
+  normal incidence) → two nG×nG `zgeev`s instead of one 2nG×2nG (4× flops).
+- **S-matrix memoization** — no redundant S(0, N-1) rebuild for field calls.
+
+Measured `rt_solve` (system under load, indicative) — mode-explicit:
+**FULL-2D NORMAL** (θ=0°,φ=0°) nG=97 963→~300 ms, nG=201 6420→~1500 ms
+(~4×); **QUASI-1D OBLIQUE** (θ=6°,φ=45°) nG=113 total 145 ms. `R` unchanged
+and matching grcwa in every mode. Full tables in `benchmarks/README.md`.
+
+**Note on S-matrix doubling:** the FIRST attempt (naive `S^R` recombination)
+was reverted — it ends with a phantom reference layer that mismatches the
+boundary medium (drops inter-period interfaces, double-counts boundary phases,
+~4e-4 R error). The current implementation (Aug 2026) exponentiates
+`period^(R-1)` and cascades with the last period's real boundary interface via
+the exact Redheffer cascade — identical to the sequential path to ~4e-15.
 
 ### 7.5 Python bindings (nanobind) — grcwa drop-in
 

@@ -202,6 +202,16 @@ private:
     };
     std::map<UniformPairKey, UniformPairCache> uniform_pair_cache_;
 
+    // Memoized result of the most recent GetSMatrix(indi, indj) call. RT_Solve
+    // builds S(0, Layer_N-1) and the subsequent field reconstruction
+    // (SolveInterior at layer 0) would rebuild it from scratch — caching
+    // eliminates that duplication. Invalidated on Init_Setup/GridLayer_geteps.
+    struct SMatrixCache {
+        int indi = -1, indj = -1;
+        ComplexMatrix S11, S12, S21, S22;
+    };
+    SMatrixCache smatrix_cache_;
+
     // ── Internal helpers ──
     void MakeKPMatrix_uniform(complex omega, const ComplexVector& kx, const ComplexVector& ky,
                               complex eps, ComplexMatrix& kp);
