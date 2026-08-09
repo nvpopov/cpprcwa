@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -92,9 +93,12 @@ public:
     const ComplexVector& kx() const { return kx_; }
     const ComplexVector& ky() const { return ky_; }
     const std::vector<double>& thickness_list() const { return thickness_; }
-    const std::vector<ComplexVector>& q_list() const { return q_list_; }
-    const std::vector<ComplexMatrix>& phi_list() const { return phi_list_; }
-    const std::vector<ComplexMatrix>& kp_list() const { return kp_list_; }
+    // kp/q/phi per layer. Uniform layers with identical ε share the same
+    // (kp, q) and all uniform layers share a single Identity phi, so periodic
+    // stacks hold ~nDistinct full matrices instead of one per layer.
+    const std::vector<std::shared_ptr<const ComplexVector>>& q_list() const { return q_list_; }
+    const std::vector<std::shared_ptr<const ComplexMatrix>>& phi_list() const { return phi_list_; }
+    const std::vector<std::shared_ptr<const ComplexMatrix>>& kp_list() const { return kp_list_; }
     double normalization() const { return normalization_; }
 
     // Print an estimate of the required peak memory to stdout: persistent
@@ -161,9 +165,11 @@ private:
     int patterned_count_ = 0;         // total patterned layers added
 
     // ── Computed layer data (length = Layer_N) ──
-    std::vector<ComplexMatrix> kp_list_;
-    std::vector<ComplexVector> q_list_;
-    std::vector<ComplexMatrix> phi_list_;
+    // Uniform layers share kp/q/phi across identical eps values (dedup); all
+    // uniform layers share a single Identity phi. Patterned layers own theirs.
+    std::vector<std::shared_ptr<const ComplexMatrix>> kp_list_;
+    std::vector<std::shared_ptr<const ComplexVector>>  q_list_;
+    std::vector<std::shared_ptr<const ComplexMatrix>> phi_list_;
 
     // ── Per-patterned-layer (indexed by patterned_count, NOT Layer_N) ──
     std::vector<ComplexMatrix> patterned_epinv_;
@@ -225,6 +231,12 @@ private:
     FieldFourier field_from_amplitudes(int which_layer,
                                        const ComplexVector& ai,
                                        const ComplexVector& bi) const;
+
+    // Dereference the per-layer shared (kp, q, phi). Uniform layers with the
+    // same ε point at the same object, so these are cheap const refs.
+    const ComplexMatrix& kp(int li) const { return *kp_list_[li]; }
+    const ComplexVector& q(int li) const { return *q_list_[li]; }
+    const ComplexMatrix& ph(int li) const { return *phi_list_[li]; }
 };
 
 } // namespace cpprcwa

@@ -95,19 +95,20 @@ void RCWA::Init_Setup(double Pscale, int Gmethod) {
     quasi1d_fastpath_ = quasi1d_;
     quasi1d_diagonal_ = quasi1d_ && (std::abs(ky0) < 1e-12 * std::abs(omega_));
 
-    // Per-layer kp/q/phi for uniform layers. Patterned layers are filled
-    // in GridLayer_geteps().
+    // Per-layer kp/q/phi. Uniform layers SHARE storage across identical eps
+    // values (they depend only on eps + the global kx/ky/omega) and share one
+    // Identity phi, so periodic stacks (Mo/Si EUV multilayers) do not hold a
+    // full (2nG)² copy per layer. Patterned layers are filled in
+    // GridLayer_geteps().
     int nLayers = Layer_N();
-    kp_list_.assign(nLayers, ComplexMatrix());
-    q_list_.assign(nLayers, ComplexVector());
-    phi_list_.assign(nLayers, ComplexMatrix());
+    kp_list_.assign(nLayers, nullptr);
+    q_list_.assign(nLayers, nullptr);
+    phi_list_.assign(nLayers, nullptr);
 
     normalization_ = std::sqrt(eps0.real()) / std::cos(theta_);   // rcwa.py:103
 
-    // Uniform layers share kp/q/phi across identical eps values (they depend
-    // only on eps + the global kx/ky/omega). Periodic stacks (Mo/Si EUV
-    // multilayers) repeat a few eps values dozens of times — caching turns 80
-    // eigen/matrix setups into ~5.
+    // The uniform eigensystem always yields phi = I, so one shared Identity
+    // covers every uniform layer.
     struct EpsKey {
         complex eps;
         bool operator<(const EpsKey& o) const {
@@ -115,8 +116,10 @@ void RCWA::Init_Setup(double Pscale, int Gmethod) {
             return eps.imag() < o.eps.imag();
         }
     };
-    std::map<EpsKey, std::pair<ComplexMatrix, ComplexVector>> uni_cache;
+    std::map<EpsKey, std::pair<std::shared_ptr<const ComplexMatrix>,
+                               std::shared_ptr<const ComplexVector>>> uni_cache;
 
+    std::shared_ptr<const ComplexMatrix> I_shared;
     int uniform_idx = 0;
     for (int li = 0; li < nLayers; ++li) {
         if (layer_types_[li] != LayerType::Uniform) continue;
@@ -124,15 +127,18 @@ void RCWA::Init_Setup(double Pscale, int Gmethod) {
         EpsKey key{eps};
         auto it = uni_cache.find(key);
         if (it == uni_cache.end()) {
-            MakeKPMatrix_uniform(omega_, kx_, ky_, eps, kp_list_[li]);
-            SolveLayerEigensystem_uniform(omega_, kx_, ky_, eps,
-                                          q_list_[li], phi_list_[li]);
-            it = uni_cache.emplace(key, std::make_pair(kp_list_[li], q_list_[li])).first;
-        } else {
-            kp_list_[li] = it->second.first;
-            q_list_[li]  = it->second.second;
-            phi_list_[li] = ComplexMatrix::Identity(2 * nG_, 2 * nG_);
+            auto kp = std::make_shared<ComplexMatrix>();
+            auto q  = std::make_shared<ComplexVector>();
+            ComplexMatrix phi;   // discarded — always I for uniform layers
+            MakeKPMatrix_uniform(omega_, kx_, ky_, eps, *kp);
+            SolveLayerEigensystem_uniform(omega_, kx_, ky_, eps, *q, phi);
+            it = uni_cache.emplace(key, std::make_pair(kp, q)).first;
         }
+        kp_list_[li] = it->second.first;
+        q_list_[li]  = it->second.second;
+        if (!I_shared)
+            I_shared = std::make_shared<ComplexMatrix>(ComplexMatrix::Identity(2 * nG_, 2 * nG_));
+        phi_list_[li] = I_shared;
         ++uniform_idx;
     }
 
@@ -146,12 +152,29 @@ void RCWA::PrintMemoryReport() const {
     const int64_t full_mat = n2 * n2 * cplx;   // bytes per 2nG×2nG complex matrix
 
     // ── Persistent storage (RCWA object lifetime) ──
+    // Uniform layers DEDUPLICATE kp/q across identical ε values and all share
+    // one Identity phi; only patterned layers own a full (kp, phi) each.
     int64_t persistent = 0;
+    int nUniform = 0;
+    struct EpsCmp {
+        bool operator()(const complex& a, const complex& b) const {
+            if (a.real() != b.real()) return a.real() < b.real();
+            return a.imag() < b.imag();
+        }
+    };
+    std::set<complex, EpsCmp> distinct_eps;
     for (int li = 0; li < Layer_N(); ++li) {
-        persistent += 2 * full_mat + n2 * cplx;      // kp + phi, q
-        if (layer_types_[li] == LayerType::Grid)
-            persistent += n * n * cplx + full_mat;   // patterned epinv + eps2
+        if (layer_types_[li] == LayerType::Grid) {
+            persistent += 2 * full_mat + n2 * cplx;   // kp + phi, q (own)
+            persistent += n * n * cplx + full_mat;    // patterned epinv + eps2
+        } else {
+            ++nUniform;
+            distinct_eps.insert(uniform_eps_[material_idx_[li]]);
+        }
     }
+    persistent += static_cast<int64_t>(distinct_eps.size()) * full_mat;  // one kp per distinct ε
+    persistent += static_cast<int64_t>(distinct_eps.size()) * n2 * cplx; // one q per distinct ε
+    if (nUniform > 0) persistent += full_mat;          // single shared Identity phi
     persistent += n * 2 * 4;                          // G_ (nG×2 int)
     persistent += 2 * n * cplx;                       // kx_, ky_
     persistent += 2 * n2 * cplx;                      // a0_, bN_
@@ -266,11 +289,17 @@ void RCWA::GridLayer_geteps(const std::vector<complex>& ep_all_isotropic) {
         auto t_e1 = std::chrono::steady_clock::now();
         patterned_epinv_.push_back(result.epsinv);
         patterned_ep2_.push_back(result.eps2);
-        // Fill kp/q/phi for this layer
-        MakeKPMatrix_patterned(omega_, kx_, ky_, result.epsinv, result.eps2, kp_list_[li]);
+        // Fill kp/q/phi for this layer (patterned layers own their matrices).
+        auto kp = std::make_shared<ComplexMatrix>();
+        auto q  = std::make_shared<ComplexVector>();
+        auto phi = std::make_shared<ComplexMatrix>();
+        MakeKPMatrix_patterned(omega_, kx_, ky_, result.epsinv, result.eps2, *kp);
         auto t_e2 = std::chrono::steady_clock::now();
-        SolveLayerEigensystem_patterned(omega_, kx_, ky_, kp_list_[li], result.eps2,
-                                        q_list_[li], phi_list_[li]);
+        SolveLayerEigensystem_patterned(omega_, kx_, ky_, *kp, result.eps2,
+                                        *q, *phi);
+        kp_list_[li] = kp;
+        q_list_[li]  = q;
+        phi_list_[li] = phi;
         auto t_e3 = std::chrono::steady_clock::now();
         if (std::getenv("CPPRCWA_TIMING")) {
             using ms = std::chrono::duration<double, std::milli>;
@@ -385,8 +414,8 @@ void RCWA::GetSMatrix(int indi, int indj,
             layer_types_[lp1] == LayerType::Uniform;
 
         ComplexMatrix T11, T12;
-        ComplexMatrix d1 = (complex(0,1) * q_list_[l]   * thickness_[l]  ).array().exp().matrix().asDiagonal();
-        ComplexMatrix d2 = (complex(0,1) * q_list_[lp1] * thickness_[lp1]).array().exp().matrix().asDiagonal();
+        ComplexMatrix d1 = (complex(0,1) * q(l)   * thickness_[l]  ).array().exp().matrix().asDiagonal();
+        ComplexMatrix d2 = (complex(0,1) * q(lp1) * thickness_[lp1]).array().exp().matrix().asDiagonal();
 
         if (uniform_pair) {
             // phi = I for uniform layers → Q = I. Cache T11/T12 per (eps_l, eps_lp1).
@@ -394,10 +423,10 @@ void RCWA::GetSMatrix(int indi, int indj,
                                uniform_eps_[material_idx_[lp1]]};
             auto it = uniform_pair_cache_.find(key);
             if (it == uniform_pair_cache_.end()) {
-                ComplexMatrix kp_l_inv = internal::zinverse(kp_list_[l]);   // = inv(kp_l·phi_l)
-                ComplexVector qinv = q_list_[lp1].cwiseInverse();
-                ComplexMatrix P = q_list_[l].asDiagonal() * kp_l_inv
-                                  * kp_list_[lp1] * qinv.asDiagonal();
+                ComplexMatrix kp_l_inv = internal::zinverse(kp(l));   // = inv(kp_l·phi_l)
+                ComplexVector qinv = q(lp1).cwiseInverse();
+                ComplexMatrix P = q(l).asDiagonal() * kp_l_inv
+                                  * kp(lp1) * qinv.asDiagonal();
                 UniformPairCache c;
                 c.T11 = 0.5 * (ComplexMatrix::Identity(n2, n2) + P);
                 c.T12 = 0.5 * (ComplexMatrix::Identity(n2, n2) - P);
@@ -406,11 +435,11 @@ void RCWA::GetSMatrix(int indi, int indj,
             T11 = it->second.T11;
             T12 = it->second.T12;
         } else {
-            ComplexMatrix Q = internal::zinverse(phi_list_[l]) * phi_list_[lp1];
-            ComplexMatrix kpphi_l_inv = internal::zinverse(kp_list_[l] * phi_list_[l]);
-            ComplexVector qinv = q_list_[lp1].cwiseInverse();
-            ComplexMatrix P = q_list_[l].asDiagonal() * kpphi_l_inv
-                              * kp_list_[lp1] * phi_list_[lp1] * qinv.asDiagonal();
+            ComplexMatrix Q = internal::zinverse(ph(l)) * ph(lp1);
+            ComplexMatrix kpphi_l_inv = internal::zinverse(kp(l) * ph(l));
+            ComplexVector qinv = q(lp1).cwiseInverse();
+            ComplexMatrix P = q(l).asDiagonal() * kpphi_l_inv
+                              * kp(lp1) * ph(lp1) * qinv.asDiagonal();
             T11 = 0.5 * (Q + P);
             T12 = 0.5 * (Q - P);
         }
@@ -489,12 +518,12 @@ void RCWA::GetSMatrix(int indi, int indj,
                 ComplexVector r21 = ComplexVector::Zero(n2);
                 for (int l = m; l < indj; ++l) {
                     int lp1 = l + 1;
-                    const ComplexVector& ql = q_list_[l];
-                    const ComplexVector& qb = q_list_[lp1];
+                    const ComplexVector& ql = q(l);
+                    const ComplexVector& qb = q(lp1);
                     for (int h = 0; h < n2; ++h) {
                         complex d1 = std::exp(complex(0, 1) * ql(h) * thickness_[l]);
                         complex d2 = std::exp(complex(0, 1) * qb(h) * thickness_[lp1]);
-                        complex kl = kp_list_[l](h, h), kb = kp_list_[lp1](h, h);
+                        complex kl = kp(l)(h, h), kb = kp(lp1)(h, h);
                         complex P = (ql(h) / kl) * (kb / qb(h));
                         complex T11 = 0.5 * (complex(1, 0) + P);
                         complex T12 = 0.5 * (complex(1, 0) - P);
@@ -520,10 +549,10 @@ void RCWA::GetSMatrix(int indi, int indj,
                 }
                 for (int l = m; l < indj; ++l) {
                     int lp1 = l + 1;
-                    const ComplexVector& ql = q_list_[l];
-                    const ComplexVector& qb = q_list_[lp1];
-                    const ComplexMatrix& kpl = kp_list_[l];
-                    const ComplexMatrix& kpb = kp_list_[lp1];
+                    const ComplexVector& ql = q(l);
+                    const ComplexVector& qb = q(lp1);
+                    const ComplexMatrix& kpl = kp(l);
+                    const ComplexMatrix& kpb = kp(lp1);
                     const double tl = thickness_[l], tb = thickness_[lp1];
                     for (int h = 0; h < nG_; ++h) {
                         complex d1 = std::exp(complex(0, 1) * ql(h) * tl);
@@ -661,9 +690,9 @@ RTResult RCWA::RT_Solve(bool normalize, bool byorder) {
     SolveExterior(a0_, bN_, aN, b0);
 
     // Layer 0: incident (a0) and reflected (b0)
-    auto [fi, bi] = poynting_flux(omega_, kp_list_[0], phi_list_[0], q_list_[0], a0_, b0);
+    auto [fi, bi] = poynting_flux(omega_, kp(0), ph(0), q(0), a0_, b0);
     // Last layer: transmitted (aN) and backward-excited (bN)
-    auto [fe, be] = poynting_flux(omega_, kp_list_[NL-1], phi_list_[NL-1], q_list_[NL-1], aN, bN_);
+    auto [fe, be] = poynting_flux(omega_, kp(NL-1), ph(NL-1), q(NL-1), aN, bN_);
 
     RTResult result;
     if (direction_ == Direction::Forward) {
@@ -692,7 +721,7 @@ std::pair<ComplexVector, ComplexVector>
 RCWA::GetAmplitudes(int which_layer, double z_offset) {
     auto [ai, bi] = GetAmplitudes_noTranslate(which_layer);
     ComplexVector aim, bim;
-    TranslateAmplitudes(q_list_[which_layer], thickness_[which_layer], z_offset,
+    TranslateAmplitudes(q(which_layer), thickness_[which_layer], z_offset,
                         ai, bi, aim, bim);
     return {aim, bim};
 }
@@ -702,19 +731,18 @@ RCWA::field_from_amplitudes(int which_layer,
                             const ComplexVector& ai,
                             const ComplexVector& bi) const {
     // rcwa.py Solve_FieldFourier body (282-319)
-    const ComplexVector& q = q_list_[which_layer];
+    const ComplexVector& qloc = q(which_layer);
     bool is_uniform = (layer_types_[which_layer] == LayerType::Uniform);
 
     // hx, hy in Fourier space
-    ComplexVector fhxy = phi_list_[which_layer] * (ai + bi);
+    ComplexVector fhxy = ph(which_layer) * (ai + bi);
     ComplexVector fhx = fhxy.head(nG_);
     ComplexVector fhy = fhxy.tail(nG_);
 
     // ex, ey in Fourier space (fey = -fexy[:nG], fex = fexy[nG:])
-    ComplexVector tmp1 = (ai - bi).cwiseQuotient((omega_ * q.array()).matrix());
-    ComplexVector tmp2 = phi_list_[which_layer] * tmp1;
-    ComplexVector fexy = kp_list_[which_layer] * tmp2;
-    ComplexVector fey = -fexy.head(nG_);
+    ComplexVector tmp1 = (ai - bi).cwiseQuotient((omega_ * qloc.array()).matrix());
+    ComplexVector tmp2 = ph(which_layer) * tmp1;
+    ComplexVector fexy = kp(which_layer) * tmp2;    ComplexVector fey = -fexy.head(nG_);
     ComplexVector fex = fexy.tail(nG_);
 
     // hz
@@ -738,14 +766,14 @@ std::vector<FieldFourier>
 RCWA::Solve_FieldFourier(int which_layer, const std::vector<double>& z_offsets) {
     // rcwa.py:282-319
     auto [ai0, bi0] = GetAmplitudes_noTranslate(which_layer);
-    const ComplexVector& q = q_list_[which_layer];
+    const ComplexVector& qloc = q(which_layer);
     double thickness = thickness_[which_layer];
 
     std::vector<FieldFourier> out;
     out.reserve(z_offsets.size());
     for (double zoff : z_offsets) {
         ComplexVector aim, bim;
-        TranslateAmplitudes(q, thickness, zoff, ai0, bi0, aim, bim);
+        TranslateAmplitudes(qloc, thickness, zoff, ai0, bi0, aim, bim);
         out.push_back(field_from_amplitudes(which_layer, aim, bim));
     }
     return out;
@@ -796,7 +824,7 @@ FieldFourier RCWA::ForwardPropagatedFieldFourier(int which_layer, double z_offse
     // Field from the forward amplitudes ai alone (bi = 0), at depth z_offset.
     auto [ai, bi] = GetAmplitudes_noTranslate(which_layer);
     ComplexVector aim, bim;
-    TranslateAmplitudes(q_list_[which_layer], thickness_[which_layer], z_offset,
+    TranslateAmplitudes(q(which_layer), thickness_[which_layer], z_offset,
                         ai, bi, aim, bim);
     return field_from_amplitudes(which_layer, aim, ComplexVector::Zero(2 * nG_));
 }
@@ -806,7 +834,7 @@ FieldFourier RCWA::BackwardPropagatedFieldFourier(int which_layer, double z_offs
     // Layer 0 at z=0 → the reflected field in air.
     auto [ai, bi] = GetAmplitudes_noTranslate(which_layer);
     ComplexVector aim, bim;
-    TranslateAmplitudes(q_list_[which_layer], thickness_[which_layer], z_offset,
+    TranslateAmplitudes(q(which_layer), thickness_[which_layer], z_offset,
                         ai, bi, aim, bim);
     return field_from_amplitudes(which_layer, ComplexVector::Zero(2 * nG_), bim);
 }
@@ -887,9 +915,9 @@ complex RCWA::Volume_integral(int which_layer,
     // trace(abM·T) = Σ_{P,Q} a_Pᵀ (Mt_PQ ∘ T_QPᵀ) conj(a_Q)  (a_L=ai, a_R=bi):
     // val = aiᵀ(Maa∘Aᵀ)conj(ai) + biᵀ(Maa∘Aᵀ)conj(bi)
     //     + aiᵀ(Mab∘Bᵀ)conj(bi) + biᵀ(Mab∘Bᵀ)conj(ai)
-    const ComplexMatrix& kp  = kp_list_[which_layer];
-    const ComplexVector&  q  = q_list_[which_layer];
-    const ComplexMatrix&  phi = phi_list_[which_layer];
+    const ComplexMatrix& kpm = kp(which_layer);
+    const ComplexVector&  qm  = q(which_layer);
+    const ComplexMatrix&  phim = ph(which_layer);
     bool is_uniform = (layer_types_[which_layer] == LayerType::Uniform);
 
     ComplexMatrix epinv_mat;
@@ -906,14 +934,14 @@ complex RCWA::Volume_integral(int which_layer,
     const int n2 = 2 * nG_;
 
     // Faxy (2nG×2nG) and Faz (nG×2nG) — F = [[Faxy, -Faxy], [Faz, Faz]]
-    ComplexMatrix Faxy = kp * phi * (complex(1,0) / (omega_ * q.array())).matrix().asDiagonal();
+    ComplexMatrix Faxy = kpm * phim * (complex(1,0) / (omega_ * qm.array())).matrix().asDiagonal();
     ComplexMatrix Faz = ComplexMatrix::Zero(nG_, 2 * nG_);
     {
         ComplexMatrix Faz1 = (complex(1,0)/omega_) * epinv_mat * ky_.asDiagonal();
         ComplexMatrix Faz2 = -(complex(1,0)/omega_) * epinv_mat * kx_.asDiagonal();
         Faz.leftCols(nG_)  = Faz1;
         Faz.rightCols(nG_) = Faz2;
-        Faz = Faz * phi;
+        Faz = Faz * phim;
     }
 
     // A = C + D, B = D - C with C = Faxy†·Mxy·Faxy, D = Faz†·Mz·Faz
@@ -931,7 +959,7 @@ complex RCWA::Volume_integral(int which_layer,
     // W_A = Maa∘Aᵀ, W_B = Mab∘Bᵀ (2nG×2nG each) — Mt blocks from z-integral.
     ComplexMatrix W_A, W_B;
     {
-        auto [Maa, Mab] = matrix_zintegral_blocks(q, thickness_[which_layer]);
+        auto [Maa, Mab] = matrix_zintegral_blocks(qm, thickness_[which_layer]);
         W_A = Maa.cwiseProduct(A.transpose());
         W_B = Mab.cwiseProduct(B.transpose());
     }

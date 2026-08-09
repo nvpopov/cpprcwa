@@ -59,8 +59,23 @@ tolerance and matches grcwa's `ex1.py`/`ex2.py`/`ex4.py` to printed precision.
 | 6 Field reconstruction | ✅ | `Solve_Field*`, `Return_eps` (matches grcwa to ~1e-12) |
 | 7 Post-processing | ✅ | `Volume_integral`, stress tensor (matches grcwa) |
 | 8 Examples | ✅ | `ex1`/`ex2`/`ex4` ports + golden scripts + EUV multilayer mirror + EUV absorber + reflected-field validation & plotting + quasi-1D line grating |
-| 9 GPU | ⛔ | Deferred (not started) |
+| 9 GPU | ⛔ | **Descoped** — feasibility spike run (see §Phase 9): no `cusolverDnZgeev` exists, S-matrix matmuls don't accelerate on GPU, only cuFFT helps (~20×, small setup fraction) |
 | 10 Polish | ✅ | README, install target; Python bindings (nanobind, grcwa drop-in) done; OpenMP/pybind11 deferred |
+
+**Memory work (Aug 2026):**
+- `Volume_integral` rewritten **block-wise** (§10.4): the 4nG×4nG
+  `outer(ab,conj(ab))`, `Mt`, and the 3nG×3nG `Mtotal`/`F` are never
+  materialized — the trace collapses onto 2nG×2nG blocks (`A`, `B`, `Maa`,
+  `Mab` + two Hadamard products). Validated identical to the original formula
+  to ~1e-16.
+- **Uniform-layer dedup**: kp/q/phi are shared (via `shared_ptr<const>`) across
+  identical ε values, and all uniform layers share one Identity phi. Periodic
+  stacks hold ~nDistinct full matrices instead of one per layer: persistent
+  storage drops ~20× (quasi-1D nG=113: 132→6.5 MiB; nG=253: 662→32 MiB) with
+  measured peak RSS 168→42 MiB, `R` unchanged.
+- **`RCWAConfig::report_memory`** (+ `--mem` in the examples): after
+  `Init_Setup` prints the estimated persistent + transient peak memory,
+  validated against `/usr/bin/time -v` RSS to within ~5–9%.
 
 **Notable bugs found and fixed during the port:**
 - Uninitialized Eigen matrices (`Jk`, `k_mat`) — off-diagonal garbage polluted
@@ -1040,7 +1055,36 @@ If FFTW threads support is unavailable, the OpenMP layer in Phase 10 must skip p
 - [ ] Write `scripts/compare_results.py` — element-wise diff with tolerance
 - [ ] Document any numerical discrepancies (eigenvector phase, ordering, etc.)
 
-### Phase 9: GPU Acceleration (Optional) — 5–7 days
+### Phase 9: GPU Acceleration (Optional) — ⛔ SPIKED & DESCOPED (Aug 2026)
+
+**Spike result (DONE — `benchmarks/bench_zgeev.cpp`):**
+The feasibility spike was run on an RTX 2060 (apt CUDA 11.5 libs; the cuBLAS/
+cuFFT paths also verified against CUDA 12.8 headers) and the answer is decisive:
+
+1. **`cusolverDnZgeev` does not exist.** cuSOLVER (verified in the CUDA 11.5
+   *and* 12.8 headers) ships only Hermitian eigensolvers (`Zheevd`/`Zheevj`)
+   and SVD (`Zgesvd`/`Zgesvdj`). A GPU non-Hermitian `zgeev` would require
+   third-party **MAGMA** (`magma_zgeev`) or a hand-written GPU QR iteration.
+2. **S-matrix matmul (the dominant solve cost) does not accelerate.** cuBLAS
+   `zgemm` vs OpenBLAS `zgemm` at the `(2nG)³` star-product size: **0.7× / 1.0×
+   / 1.1×** at nG = 200 / 500 / 1000 (host↔device transfer dominates the small
+   blocks). No GPU win.
+3. **Only the eps convolution FFT accelerates:** cuFFT is ~20× faster than
+   FFTW on a 512×512 grid — but that is a small setup fraction of the pipeline.
+
+CPU `zgeev` baseline for reference (OpenBLAS, serial): 217 ms (nG=200),
+2.6 s (nG=500), 14.5 s (nG=1000), residuals ~1e-14.
+
+**Verdict:** Phase 9 is **descoped** — keep `zgeev` and the S-matrix on CPU
+(no GPU routine / no speedup available), and the only portable GPU win (cuFFT
+for `Epsilon_fft`) is not worth a backend abstraction for a small setup-step
+gain. If more speed is wanted, **Intel MKL's threaded `zgeev`** (≈1.6–2×, see
+README) is the cheaper CPU investment.
+
+If Phase 9 is ever reopened, the path is: MAGMA `magma_zgeev` feasibility
+first, then cuFFT + cuBLAS only; do not touch the S-matrix on GPU.
+
+<details><summary>Original Phase 9 plan (superseded)</summary>
 
 **Spike (do FIRST, before committing to the 5–7 day estimate):**
 - [ ] **`cusolverDnZgeev` feasibility check** — non-Hermitian complex eigensolver on GPU. Historically slow and poorly conditioned relative to CPU `zgeev`; the achievable speedup at nG ≤ 1000 may be negligible or even negative after host↔device transfer. Write a 50-line micro-benchmark comparing CPU vs GPU `zgeev` for matrix sizes {200, 500, 1000, 2000} before designing the rest of the backend. If GPU loses or breaks even, **descope Phase 9** to cuFFT/cuBLAS only and keep `zgeev` on CPU.
@@ -1052,6 +1096,8 @@ If FFTW threads support is unavailable, the OpenMP layer in Phase 10 must skip p
 - [ ] Custom CUDA kernels for convolution matrix gather and branch-cut `where`
 - [ ] Benchmark: CPU vs GPU for nG ∈ {50, 100, 200, 500, 1000}
 - [ ] Validate numerical equivalence against CPU path
+
+</details>
 
 ### Phase 10: Polish & Documentation — ✅ DONE (README, install target; OpenMP/pybind11 deferred)
 - [ ] Memory optimization (pre-allocated buffers, `.noalias()`, raw BLAS calls)
@@ -1157,6 +1203,22 @@ The plan's pseudocode allocates many `O(nG²)` temporaries. At nG=1000 several o
 - **nG ≤ 500:** use Eigen `.noalias()` for every assignment that's a product, and pre-allocate one `2nG × 2nG` workspace reused across S-matrix iterations.
 - **nG = 1000+:** require a workspace arena (pre-allocated buffers passed by reference) and rewrite `Volume_integral` to compute `trace(abM · conj(F)ᵀ · M · F)` without materializing `outer(ab, conj(ab))` — compute it block-wise.
 - Document the peak RSS at nG ∈ {200, 500, 1000} in `benchmarks/README.md` so regressions are caught.
+
+**Done (Aug 2026):**
+- `Volume_integral` is now **block-wise**: only 2nG×2nG blocks (`Faxy`, `Faz`,
+  `Mxy`, `A/B`, `Maa/Mab`, `W_A/W_B`) are ever materialized; the 4nG×4nG
+  `outer(ab,conj(ab))`/`Mt` and the 3nG×3nG `Mtotal`/`F` are gone. Identical
+  to the original formula to ~1e-16 (golden `Volume_integral` test passes).
+- **Uniform-layer dedup**: kp/q/phi stored as `shared_ptr<const>`, shared
+  across identical ε; all uniform layers share one Identity phi. Persistent
+  storage for periodic stacks drops ~20×.
+- **`RCWAConfig::report_memory`** (+ `--mem` in the examples) prints an
+  estimate of persistent + transient peak memory right after `Init_Setup`
+  (all sizes depend only on nG + layer structure), validated against measured
+  RSS.
+- Remaining arena work — pre-allocated `GetSMatrix` star-product scratch
+  buffers to cut malloc churn — is a *speed* optimization, not a peak-RSS one
+  (the per-step peak is already bounded at ~20 live 2nG×2nG matrices).
 
 ### 10.5 Error-Handling Policy
 

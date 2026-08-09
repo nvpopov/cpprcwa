@@ -224,9 +224,22 @@ NB_MODULE(cpprcwa, m) {
         .def_prop_ro("kx", &RCWA::kx)
         .def_prop_ro("ky", &RCWA::ky)
         .def_prop_ro("thickness_list", &RCWA::thickness_list)
-        .def_prop_ro("q_list", &RCWA::q_list)
-        .def_prop_ro("phi_list", &RCWA::phi_list)
-        .def_prop_ro("kp_list", &RCWA::kp_list)
+        // kp/q/phi are shared per distinct ε; expose as per-layer lists.
+        .def_prop_ro("q_list", [](RCWA& self) {
+            nb::list out;
+            for (const auto& q : self.q_list()) out.append(nb::cast(*q));
+            return nb::object(out);
+        })
+        .def_prop_ro("phi_list", [](RCWA& self) {
+            nb::list out;
+            for (const auto& p : self.phi_list()) out.append(nb::cast(*p));
+            return nb::object(out);
+        })
+        .def_prop_ro("kp_list", [](RCWA& self) {
+            nb::list out;
+            for (const auto& k : self.kp_list()) out.append(nb::cast(*k));
+            return nb::object(out);
+        })
         .def_prop_ro("Uniform_ep_list", &RCWA::uniform_eps_list)
         .def_prop_ro("GridLayer_Nxy_list", &RCWA::grid_Nxy_list)
         .def_prop_ro("Patterned_epinv_list", &RCWA::patterned_epinv_list)

@@ -253,6 +253,14 @@ RTResult rt = solver.RT_Solve(normalize, byorder);
    into `kp_list_`, `q_list_`, `phi_list_`. Patterned entries are filled
    later by `GridLayer_geteps`.
 
+**Storage dedup (Aug 2026):** `kp_list_`/`q_list_`/`phi_list_` hold
+`shared_ptr<const>` per layer. Uniform layers with identical ε share the same
+`(kp, q)` object, and every uniform layer points at a single shared Identity
+`phi` (the uniform eigensystem always yields `phi = I`). Patterned layers own
+their matrices. Periodic stacks therefore keep ~nDistinct full matrices
+instead of one copy per layer (~20× less persistent memory; private accessors
+`kp(li)`/`q(li)`/`ph(li)` dereference for the hot paths).
+
 **`MakeExcitationPlanewave(exc)`**
 Projects the `(p, s)` amplitudes onto the `(x, y)` Fourier-amplitude basis
 (mirrors `rcwa.py:125-153`):
@@ -419,20 +427,26 @@ air; used to validate every reflected order against grcwa.
   needed Fourier coefficients.)
 
 **`Volume_integral(which_layer, Mx, My, Mz, normalize)`**
-Computes `1/A·∫V (Mx·|Ex|² + My·|Ey|² + Mz·|Ez|²)` for absorption:
+Computes `1/A·∫V (Mx·|Ex|² + My·|Ey|² + Mz·|Ez|²)` for absorption.
+
+**Computed block-wise (Aug 2026, PLAN.md §10.4)** — the 4nG×4nG
+`outer(ab,conj(ab))`, `Mt`, `abM` and the 3nG×3nG `Mtotal`/`F` are **never
+materialized** (peak ~1 GiB @ nG=1000 in the original). The block structure of
+`F = [[Faxy,−Faxy],[Faz,Faz]]` and `Mt = [[Maa,Mab],[Mab,Maa]]` collapses the
+trace onto 2nG×2nG blocks:
 ```
-ab   = [ai; bi]                       // 4nG, from SolveInterior
-abM  = outer(ab, conj(ab)) ∘ Mt        // ∘ = Hadamard, Mt = Matrix_zintegral
-Faxy = kp·phi·diag(1/(ω·q))            // 2nG × 2nG
-Faz  = [ (1/ω)·epinv·diag(ky), −(1/ω)·epinv·diag(kx) ] · phi   // nG × 2nG
-F    = [[Faxy, −Faxy], [Faz, Faz]]     // 3nG × 4nG
-Mtotal = block_diag(Mx, My, Mz)        // 3nG × 3nG
-val   = trace(abM · (F† · Mtotal · F))
+Mxy = block_diag(Mx, My)
+C   = Faxy†·Mxy·Faxy ;  D = Faz†·Mz·Faz
+A   = C + D ;  B = D − C           // T = F†·Mtotal·F = [[A,B],[B,A]]
+W_A = Maa∘Aᵀ ;  W_B = Mab∘Bᵀ
+val = aiᵀ(W_A)conj(ai) + biᵀ(W_A)conj(bi) + aiᵀ(W_B)conj(bi) + biᵀ(W_B)conj(ai)
 if normalize: val *= normalization_
 ```
-`Matrix_zintegral(q, thickness, shift=1e-12)` builds the `4nG×4nG` z-integral
-matrix from the `Maa`/`Mab` formulas with the asymmetric diagonal `shift`
-stability term (only on `qij = qj − conj(qi)`, per `PLAN.md §6.8`).
+Identical to the original formula to ~1e-16 (golden test passes).
+`matrix_zintegral_blocks(q, thickness, shift=1e-12)` returns the `Maa`/`Mab`
+blocks (2nG×2nG each) directly from the `qj − conj(qi)` / `qj + conj(qi)`
+formulas, with the asymmetric diagonal `shift` stability term applied only to
+`qij = qj − conj(qi)` (per `PLAN.md §6.8`).
 
 **`Solve_ZStressTensorIntegral(which_layer)`** — returns `(2Fx, 2Fy, 2Fz)`:
 ```
@@ -706,6 +720,32 @@ work.
   Eigen/matrix returns are passed by value to avoid lifetime issues; the
   `std::complex<double>` caster requires `<nanobind/stl/complex.h>`.
 
+### 7.6 Memory reporting & reductions (Aug 2026)
+
+**`RCWAConfig::report_memory`** (exposed as `--mem` in the examples) makes
+`Init_Setup` print an estimate of the required peak memory. All sizes depend
+only on `nG` and the layer structure, so it is exact at that point:
+`PrintMemoryReport()` reports persistent layer storage, the uniform-pair
+T-matrix cache, the `RT_Solve` and `Volume_integral` transient peaks, and the
+estimated peak RSS. Validated against `/usr/bin/time -v` RSS to within ~5–9%.
+
+Two reductions (results bit-identical, `R` unchanged at every case):
+
+| measure | before | after |
+|---|---|---|
+| quasi-1D nG=113 persistent storage | 132 MiB | **6.5 MiB** |
+| quasi-1D nG=253 persistent storage | 662 MiB | **32 MiB** |
+| quasi-1D nG=113 measured peak RSS | 168 MiB | **42 MiB** |
+| full-2D nG=199 measured peak RSS | 503 MiB | **114 MiB** |
+
+- **Uniform-layer dedup** (§5.1): `kp`/`q`/`phi` shared via `shared_ptr<const>`
+  across identical ε (one matrix per distinct material + one shared Identity
+  `phi`), instead of a per-layer copy.
+- **Block-wise `Volume_integral`** (§5.6): no 4nG×4nG / 3nG×3nG matrices.
+- Remaining: the `GetSMatrix` star-product scratch arena is a *speed* (not
+  peak-RSS) optimization — the per-step peak is already bounded (~20 live
+  2nG×2nG matrices).
+
 ---
 
 ## 8. Known Gaps / Notes- **`RT_Solve(byorder=true)`** — per-order `R_per_order`/`T_per_order` arrays
@@ -713,8 +753,13 @@ work.
 - **Anisotropic `GridLayer_geteps`** — the multi-layer anisotropic path throws
   `NotImplementedError`; no example exercises it.
 - **`Add_LayerFourier`** — not implemented (stub); throws if called.
-- **GPU backend (Phase 9)** — deferred; see `PLAN.md` for the `zgeev`
-  feasibility spike that should precede it.
+- **GPU backend (Phase 9)** — **descoped** after the feasibility spike
+  (`benchmarks/bench_zgeev.cpp`): cuSOLVER has no `cusolverDnZgeev` (verified
+  11.5 + 12.8 headers — only Hermitian `Zheevd/j` and SVD `Zgesvd/j`), and
+  cuBLAS `zgemm` matches OpenBLAS but does not beat it at the `(2nG)³`
+  S-matrix size (0.7–1.1×). Only cuFFT helps (~20× on the eps FFT, a small
+  setup fraction). `zgeev` and the S-matrix stay on CPU; see PLAN.md §Phase 9.
+  Cheaper CPU speedup: Intel MKL threaded `zgeev` (≈1.6–2×, see README).
 - **OpenMP layer parallelism** — deferred; FFTW thread-safety caveats in
   `PLAN.md §6.11` apply.
 - Eigenvector **ordering/phase** differ from NumPy's — comparisons must use

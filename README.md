@@ -134,6 +134,13 @@ original to machine precision. Anisotropic `GridLayer_geteps` and
   LU-solve + common-subexpression elimination in the star product.
 - Uniform layers share `(kp, q, phi)` across identical ε values (cached in
   `Init_Setup`), turning 80 eigen/matrix setups into ~5 for periodic stacks.
+- **Memory**: uniform layers *deduplicate* `(kp, q, phi)` (one full matrix per
+  distinct material + one shared Identity phi, not one per layer) and
+  `Volume_integral` is computed block-wise (no 4nG×4nG / 3nG×3nG matrices),
+  cutting persistent storage ~20× and transient peaks ~3× on periodic stacks.
+  Set `RCWAConfig::report_memory` (or pass `--mem`) to print the estimated
+  persistent + transient peak memory after `Init_Setup` (validated against
+  measured RSS to ~5–9%).
 - **Quasi-1D structures** (`cfg.quasi1d`): exact reductions for y-invariant
   geometries — the harmonic set is filtered to the x-only row, and the
   all-uniform multilayer suffix is solved with a per-harmonic recursion
