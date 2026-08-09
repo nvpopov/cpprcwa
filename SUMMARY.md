@@ -820,8 +820,7 @@ $$\mathbf{T}=\mathbf{F}^\dagger\mathbf{M}_{\mathrm{tot}}\mathbf{F}
 \mathbf{B}=-\mathbf{F}_{xy}^\dagger\mathbf{M}_{xy}\mathbf{F}_{xy}
 +\mathbf{F}_{az}^\dagger\mathbf{M}_z\mathbf{F}_{az}.$$
 Writing the trace in block form
-$\mathrm{val}=\sum_{P,Q}\mathbf{a}_P^\top\big(\mathbf{M}_t^{PQ}\circ
-\mathbf{T}^{QP\top}\big)\overline{\mathbf{a}_Q}$ expands to four terms, e.g.
+$\mathrm{val}=\sum_{P,Q}\mathbf{a}_P^\top\big(\mathbf{M}_t^{PQ}\circ\mathbf{T}^{QP\top}\big)\overline{\mathbf{a}_Q}$ expands to four terms, e.g.
 $$\mathrm{val}\ \supset\ \sum_{p,q} a_i[p]\,\overline{a_i[q]}\,M_{aa}[p,q]\,A[q,p]
 =\mathbf{a}_i^\top\big(\mathbf{M}_{aa}\circ\mathbf{A}^\top\big)\overline{\mathbf{a}_i},$$
 computed with two $2n\times2n$ Hadamard products ($\mathbf{M}_{aa}\circ\mathbf{A}^\top$,
@@ -916,14 +915,13 @@ pair becomes exactly degenerate ($\min|D|\to0$).
 #### 7.7.7 TE/TM-decoupled S-matrix path (QUASI-1D NORMAL)
 
 With block-diagonal $\mathsf{kp},\phi,\mathbf{q}$, every interface matrix
-($\mathbf{Q}=\phi_\ell^{-1}\phi_{\ell+1}$, $\mathbf{P}=\mathrm{diag}(\mathbf{q}_\ell)
-(\mathsf{kp}_\ell\phi_\ell)^{-1}\mathsf{kp}_{\ell+1}\phi_{\ell+1}
-\mathrm{diag}(1/\mathbf{q}_{\ell+1})$, $\mathbf{T}_{11},\mathbf{T}_{12}$)
+($\mathbf{Q}=\phi_\ell^{-1}\phi_{\ell+1}$,
+$\mathbf{P}=\mathrm{diag}(\mathbf{q}_\ell)(\mathsf{kp}_\ell\phi_\ell)^{-1}\mathsf{kp}_{\ell+1}\phi_{\ell+1}\mathrm{diag}(1/\mathbf{q}_{\ell+1})$,
+$\mathbf{T}_{11},\mathbf{T}_{12}$)
 is block-diagonal, so the Redheffer recursion decouples into two independent
 $n\times n$ systems. The grid-interface prefix and the cascade run per
 polarization on $n\times n$ blocks (`bstep`) — 4× fewer flops — and the result
-is reassembled as $\mathbf{S}=\mathrm{diag}(\mathbf{S}_{\mathrm{TE}},
-\mathbf{S}_{\mathrm{TM}})$. Identical to the general path to ~4e-15.
+is reassembled as $\mathbf{S}=\mathrm{diag}(\mathbf{S}_{\mathrm{TE}},\mathbf{S}_{\mathrm{TM}})$. Identical to the general path to ~4e-15.
 
 #### 7.7.8 Applicability of the block shortcuts
 
