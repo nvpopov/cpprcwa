@@ -108,8 +108,15 @@ tolerance and matches grcwa's `ex1.py`/`ex2.py`/`ex4.py` to printed precision.
   prefix and the cascade are run per-polarization on nG×nG blocks (`bstep`)
   instead of full 2nG matrices — 4× fewer flops each. Verified identical to
   the general path to ~4e-15. QUASI-1D NORMAL rt_solve: 559→202 ms (nG=253),
-  1441→452 ms (nG=359). Oblique (φ≠0°) correctly falls back to the general
-  path (off-diagonal Ex–Ey coupling ∝ ky0).
+  1441→452 ms (nG=359).
+- **Block-LOWER-TRIANGULAR M eig (QUASI-1D OBLIQUE, ky0≠0)**: with the 1D
+  harmonic set (ky constant) and epinv=C⁻¹, the top-right block of M vanishes
+  exactly (M12 = ky0·(C·epinv−I)·diag(kx) = 0), so det(M−λI) =
+  det(M11−λI)·det(M22−λI) even though M21 ≠ 0. The eigenvalues split into two
+  nG problems (4× fewer zgeev flops) and the coupled eigenvectors are rebuilt
+  exactly: phi = [[phA,0],[V,phC]] with V = −phC·((phC⁻¹·M21·phA) ⊘ D),
+  D[i,j]=λC[i]−λA[j]. Bit-identical R to the full 2nG solve (verified to 17
+  digits). QUASI-1D OBLIQUE setup: ~605→253 ms (nG=253).
 
 **Notable bugs found and fixed during the port:**
 - Uninitialized Eigen matrices (`Jk`, `k_mat`) — off-diagonal garbage polluted

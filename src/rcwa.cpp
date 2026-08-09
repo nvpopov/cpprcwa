@@ -383,18 +383,32 @@ void RCWA::SolveLayerEigensystem_patterned(complex omega, const ComplexVector& k
     // off-diagonal nG×nG blocks vanish exactly, decoupling the 2nG eigenproblem
     // into two nG ones (4× fewer zgeev flops). Falls back to the full 2nG
     // solve otherwise.
-    double off = 0.0, on = 0.0;
+    //
+    // Block-LOWER-TRIANGULAR M detection (quasi-1D gratings at OBLIQUE
+    // incidence, ky0≠0): with the 1D harmonic set (ky constant) and epinv=C⁻¹,
+    // the top-right block M12 = ky0·(C·epinv−I)·diag(kx) = 0 exactly, but M21 =
+    // ky0·(C·diag(kx)·C⁻¹−diag(kx)) ≠ 0. det(M−λI) = det(M11−λI)·det(M22−λI),
+    // so the eigenvalues still split into two nG problems. The eigenvectors are
+    // coupled: phi = [[phA, 0],[V, phC]] with V = −phC·((phC⁻¹·M21·phA) ⊘ D),
+    // D[i,j] = λC[i]−λA[j]. Verified identical to the full 2nG solve to ~1e-14
+    // (numpy + C++).
+    double offTR = 0.0, offBL = 0.0, on = 0.0;
     for (int i = 0; i < nG; ++i) {
         for (int j = 0; j < nG; ++j) {
-            off = std::max(off, std::abs(M(i, nG + j)));
-            off = std::max(off, std::abs(M(nG + i, j)));
-            on  = std::max(on,  std::abs(M(i, j)));
-            on  = std::max(on,  std::abs(M(nG + i, nG + j)));
+            offTR = std::max(offTR, std::abs(M(i, nG + j)));
+            offBL = std::max(offBL, std::abs(M(nG + i, j)));
+            on    = std::max(on,    std::abs(M(i, j)));
+            on    = std::max(on,    std::abs(M(nG + i, nG + j)));
         }
     }
     q.resize(n2);
     phi.resize(n2, n2);
-    const bool block_diag = (off <= 1e-10 * on + 1e-30);
+    const double tol = 1e-10 * on + 1e-30;
+    const bool block_diag = (std::max(offTR, offBL) <= tol);
+    const bool block_tri  = (!block_diag && offTR <= tol &&
+                            !std::getenv("CPPRCWA_NO_BLOCKTRI"));
+
+    bool solved = false;
     if (block_diag) {
         ComplexVector ev1(nG), ev2(nG);
         ComplexMatrix ph1(nG, nG), ph2(nG, nG);
@@ -409,7 +423,49 @@ void RCWA::SolveLayerEigensystem_patterned(complex omega, const ComplexVector& k
         phi.setZero(n2, n2);
         phi.topLeftCorner(nG, nG)     = ph1;
         phi.bottomRightCorner(nG, nG) = ph2;
-    } else {
+        solved = true;
+    } else if (block_tri) {
+        ComplexVector lamA(nG), lamC(nG);
+        ComplexMatrix phA(nG, nG), phC(nG, nG);
+        ComplexMatrix M11 = M.topLeftCorner(nG, nG);
+        ComplexMatrix M22 = M.bottomRightCorner(nG, nG);
+        internal::zgeev(nG, M11.data(), (int)M11.outerStride(), lamA,
+                        phA.data(), (int)phA.outerStride());
+        internal::zgeev(nG, M22.data(), (int)M22.outerStride(), lamC,
+                        phC.data(), (int)phC.outerStride());
+        // X = phC⁻¹ · M21 · phA  (solve phC·X = M21·phA; LU overwrites a copy)
+        ComplexMatrix Rhs = M.bottomLeftCorner(nG, nG) * phA;
+        ComplexMatrix phC_lu = phC;
+        std::vector<int> piv = internal::zgetrf_factor(
+            nG, phC_lu.data(), (int)phC_lu.outerStride());
+        internal::zgetrs_solve(nG, nG, phC_lu.data(), (int)phC_lu.outerStride(),
+                               piv.data(), Rhs.data(), (int)Rhs.outerStride());
+        // D[i,j] = λC[i] − λA[j]; guard against TE/TM degeneracy (D ≈ 0).
+        ComplexMatrix D = lamC.replicate(1, nG)
+                          - lamA.transpose().replicate(nG, 1);
+        const double lam_scale = std::max(lamA.cwiseAbs().maxCoeff(),
+                                          lamC.cwiseAbs().maxCoeff());
+        if (D.cwiseAbs().minCoeff() < 1e-12 * lam_scale + 1e-300) {
+            // ill-conditioned coupling — fall back to the full 2nG solve.
+            ComplexVector evals(n2);
+            internal::zgeev(n2, M.data(), (int)M.outerStride(), evals,
+                            phi.data(), (int)phi.outerStride());
+            q = evals;
+            solved = true;
+        } else {
+            // V = −phC · (X ⊘ D)
+            ComplexMatrix W = Rhs.cwiseQuotient(D);
+            ComplexMatrix V = -(phC * W);
+            q.head(nG) = lamA;
+            q.tail(nG) = lamC;
+            phi.setZero(n2, n2);
+            phi.topLeftCorner(nG, nG)     = phA;
+            phi.bottomLeftCorner(nG, nG)  = V;
+            phi.bottomRightCorner(nG, nG) = phC;
+            solved = true;
+        }
+    }
+    if (!solved) {
         ComplexVector evals(n2);
         internal::zgeev(n2, M.data(), (int)M.outerStride(), evals,
                         phi.data(), (int)phi.outerStride());
@@ -420,7 +476,7 @@ void RCWA::SolveLayerEigensystem_patterned(complex omega, const ComplexVector& k
         using ms = std::chrono::duration<double, std::milli>;
         std::fprintf(stderr, "[eig] buildM=%.1f zgeev=%.1f ms%s\n",
                      ms(tt1-tt0).count(), ms(tt2-tt1).count(),
-                     block_diag ? " (block-diag)" : "");
+                     block_diag ? " (block-diag)" : (block_tri ? " (block-tri)" : ""));
     }
     // q = sqrt(evals) with branch cut
     for (int i = 0; i < n2; ++i) q(i) = std::sqrt(q(i));

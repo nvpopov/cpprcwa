@@ -40,11 +40,17 @@ Full TE/TM block-decoupled path (block-diagonal eig + block-decoupled S-matrix).
 
 ### MODE: QUASI-1D OBLIQUE (θ=6°, φ=45° — conical, full 2nG eig)
 
+Conical incidence still needs the full 2nG eig (off-diagonal Ex–Ey coupling
+∝ ky0 is genuine), but M is **block-lower-triangular** (M12 = 0 exactly since
+`C·epinv = I`), so the eig solves as two nG problems + an O(n³) eigenvector
+coupling — bit-identical R to the full 2nG solve. The S-matrix prefix/cascade
+run the general 2nG path.
+
 | nG | 2nG | setup ms | rt_solve ms | total ms | R |
 |---|---|---|---|---|---|
-| 113 | 226 | 71 | 74 | **145** | 0.547546 |
-| 187 | 374 | 229 | 217 | 445 | 0.547773 |
-| 253 | 506 | 605 | 482 | 1087 | 0.547820 |
+| 113 | 226 | 51 | 57 | **108** | 0.547546 |
+| 187 | 374 | 123 | 204 | 327 | 0.547773 |
+| 253 | 506 | 253 | 422 | 674 | 0.547820 |
 
 ### MODE: FULL-2D NORMAL (θ=0°, φ=0°)
 
@@ -75,6 +81,7 @@ Full TE/TM block-decoupled path (block-diagonal eig + block-decoupled S-matrix).
 | FULL-2D NORMAL nG=201 `rt_solve` | 6420 ms | ~1500 ms | 4.2× |
 | QUASI-1D NORMAL nG=201 total | ~360 ms | 84 ms | 4.3× |
 | QUASI-1D NORMAL nG=253 `rt_solve` | 559 ms | 202 ms | 2.8× |
+| QUASI-1D OBLIQUE nG=253 setup (eig) | ~605 ms | 253 ms | 2.4× |
 
 Historical grcwa (Python) comparison from SUMMARY.md: grcwa EUV absorber nG=97
 ≈ 5.8 s (cpprcwa ~1.05 s → ~5×); grcwa QUASI-1D NORMAL nG=201 ≈ 11.0 s

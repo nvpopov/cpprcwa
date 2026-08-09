@@ -699,7 +699,11 @@ pipeline) while matching every reflected order and the real-space field to
 - **TE/TM block-decoupled quasi-1D path** (ky0=0, QUASI-1D NORMAL): with
   block-diagonal kp/phi/q the grid-interface prefix and cascade run
   per-polarization on nG×nG blocks (`bstep`), 4× fewer flops; identical to
-  the general path to ~4e-15. Oblique (φ≠0°) falls back to the general path.
+  the general path to ~4e-15.
+- **Block-lower-triangular M eig** (QUASI-1D OBLIQUE, ky0≠0): M12 vanishes
+  exactly for the 1D harmonic set (`C·epinv=I`), so the eigenvalues split into
+  two nG problems; the coupled eigenvectors are rebuilt via
+  `V = −phC·((phC⁻¹·M21·phA) ⊘ D)` — bit-identical R to the full 2nG solve.
 
 Measured `rt_solve` (system under load, indicative) — mode-explicit:
 **FULL-2D NORMAL** (θ=0°,φ=0°) nG=97 963→~300 ms, nG=201 6420→~1500 ms
@@ -767,6 +771,174 @@ Two reductions (results bit-identical, `R` unchanged at every case):
 - Remaining: the `GetSMatrix` star-product scratch arena is a *speed* (not
   peak-RSS) optimization — the per-step peak is already bounded (~20 live
   2nG×2nG matrices).
+
+---
+
+### 7.7 Optimization derivations (Aug 2026)
+
+Every optimization below is **numerically exact** — R and the reflected field
+are bit-identical / agree to ~1e-14 with the naive path in every mode
+(QUASI-1D NORMAL / QUASI-1D OBLIQUE / FULL-2D NORMAL / FULL-2D OBLIQUE). They
+only reduce flops or memory by exploiting structure that the physics already
+has; they never change the model.
+
+**Notation.** $n\equiv n_G$ = harmonic count, $N=2n$ = block size,
+$\mathbf{k}_x,\mathbf{k}_y\in\mathbb{C}^n$ = transverse wavevectors,
+$\mathcal{C}_{ij}=\hat\varepsilon(\mathbf{G}_i-\mathbf{G}_j)$ = permittivity
+Toeplitz convolution matrix, $\mathsf{ep2}=\operatorname{diag}(\mathcal{C},\mathcal{C})$,
+$\mathsf{epinv}=\mathcal{C}^{-1}$, $\omega$ = complex frequency.
+
+#### 7.7.1 Diagonal phase factors (Redheffer step)
+
+The star-product step needs the diagonal phase matrices
+$\mathbf{d}_1=\operatorname{diag}(e^{iq_\ell t_\ell})$,
+$\mathbf{d}_2=\operatorname{diag}(e^{iq_{\ell+1}t_{\ell+1}})$. Kept as
+*vectors* and applied with `.asDiagonal()`, products become O(n) row scalings
+instead of O(n³) dense products:
+$$\big(\mathbf{d}_1\mathbf{S}_{12}\big)_{ij}=d_{1,i}\,S_{12,ij}.$$
+This removes 3 of the ~8 O(n³) matmuls per interface ($\mathbf{d}_1\mathbf{S}_{12}$,
+$\mathbf{d}_1\mathbf{S}_{11}$, $\mathbf{P}_2\mathbf{d}_2$,
+$\mathbf{S}_{22}\mathbf{T}_{11}\mathbf{d}_2$ all become O(n²) scalings).
+
+#### 7.7.2 Block-wise Volume_integral (PLAN §10.4)
+
+Original:
+$$\mathrm{val}=\operatorname{tr}\!\Big(\mathbf{abM}\,\mathbf{F}^\dagger
+\mathbf{M}_{\mathrm{tot}}\mathbf{F}\Big),\qquad
+\mathbf{abM}=\mathbf{ab}\,\mathbf{ab}^\dagger\odot\mathbf{M}_t,$$
+with $\mathbf{ab}=[\mathbf{a}_i;\mathbf{a}_b]$ and the block forms
+$$\mathbf{F}=\begin{bmatrix}\mathbf{F}_{xy} & -\mathbf{F}_{xy}\\
+\mathbf{F}_{az} & \mathbf{F}_{az}\end{bmatrix}\in\mathbb{C}^{3n\times4n},\qquad
+\mathbf{M}_t=\begin{bmatrix}\mathbf{M}_{aa}&\mathbf{M}_{ab}\\
+\mathbf{M}_{ab}&\mathbf{M}_{aa}\end{bmatrix}.$$
+The interior product collapses onto $2n\times2n$ blocks
+$\big(\mathbf{M}_{xy}=\operatorname{diag}(\mathbf{M}_x,\mathbf{M}_y)\big)$:
+$$\mathbf{T}=\mathbf{F}^\dagger\mathbf{M}_{\mathrm{tot}}\mathbf{F}
+=\begin{bmatrix}\mathbf{A}&\mathbf{B}\\ \mathbf{B}&\mathbf{A}\end{bmatrix},\qquad
+\mathbf{A}=\mathbf{F}_{xy}^\dagger\mathbf{M}_{xy}\mathbf{F}_{xy}
++\mathbf{F}_{az}^\dagger\mathbf{M}_z\mathbf{F}_{az},\qquad
+\mathbf{B}=-\mathbf{F}_{xy}^\dagger\mathbf{M}_{xy}\mathbf{F}_{xy}
++\mathbf{F}_{az}^\dagger\mathbf{M}_z\mathbf{F}_{az}.$$
+Writing the trace in block form
+$\mathrm{val}=\sum_{P,Q}\mathbf{a}_P^\top\big(\mathbf{M}_t^{PQ}\circ
+\mathbf{T}^{QP\top}\big)\overline{\mathbf{a}_Q}$ expands to four terms, e.g.
+$$\mathrm{val}\ \supset\ \sum_{p,q} a_i[p]\,\overline{a_i[q]}\,M_{aa}[p,q]\,A[q,p]
+=\mathbf{a}_i^\top\big(\mathbf{M}_{aa}\circ\mathbf{A}^\top\big)\overline{\mathbf{a}_i},$$
+computed with two $2n\times2n$ Hadamard products ($\mathbf{M}_{aa}\circ\mathbf{A}^\top$,
+$\mathbf{M}_{ab}\circ\mathbf{B}^\top$) + four matvecs. The $4n\times4n$
+`outer(ab,conj(ab))`, $\mathbf{M}_t$, and the $3n\times3n$ $\mathbf{M}_{\mathrm{tot}}$/$\mathbf{F}$
+are never materialized.
+
+#### 7.7.3 Uniform-layer storage dedup
+
+A uniform layer's $(\mathsf{kp},\mathbf{q},\phi)$ depends only on its ε and the
+global $(\omega,\mathbf{k}_x,\mathbf{k}_y)$, so identical-ε layers share one
+object via `shared_ptr<const>`; the uniform eigensystem always yields
+$\phi=I_N$, so **one** shared Identity serves every uniform layer. Periodic
+stacks hold ~nDistinct full matrices instead of one per layer (persistent
+storage $\sim 20\times$ smaller).
+
+#### 7.7.4 Periodic uniform-core binary exponentiation
+
+The Redheffer star product is associative, and the S-matrix of $R$ identical
+periods is $S_{\text{period}}^{\,\star R}$. Exponentiation by squaring uses the
+**cascade** — the exact Redheffer combination of two blocks that share boundary
+layer $m$:
+$$\mathbf{M}=\big(I-\mathbf{L}_{12}\mathbf{R}_{21}\big)^{-1},\qquad
+\mathbf{S}_{11}=\mathbf{R}_{11}\mathbf{M}\mathbf{L}_{11},\quad
+\mathbf{S}_{12}=\mathbf{R}_{11}\mathbf{M}\mathbf{L}_{12}\mathbf{R}_{22}+\mathbf{R}_{12},
+\quad\dots$$
+
+**Boundary fix (why the first attempt failed):** $S^{\,\star R}$ ends with a
+*phantom reference layer* — the period's next starting layer — which differs
+from the real boundary (e.g. the Si substrate after the last Mo/Si period). The
+correct block is
+$$S\big(s,\,s+RL\big)=S^{\,\star(R-1)}\ \star\ S\big(s+(R-1)L,\ s+RL\big),$$
+where the last term is the final period **plus its actual boundary interface**,
+built directly. ~80 sequential star steps → ~10 cascades; identical to the
+sequential path to ~4e-15.
+
+#### 7.7.5 Block-diagonal M — QUASI-1D NORMAL (ky₀ = 0)
+
+With the 1D harmonic set and $\mathbf{k}_y=\mathbf{0}$:
+$$\mathbf{J}_k=\begin{bmatrix}\mathbf{0}\\ \operatorname{diag}(\mathbf{k}_x)\end{bmatrix}
+\;\Rightarrow\;
+\mathsf{kp}=\operatorname{diag}\!\Big(\omega^2 I,\;
+\omega^2 I-\operatorname{diag}(\mathbf{k}_x)\,\mathsf{epinv}\,\operatorname{diag}(\mathbf{k}_x)\Big),$$
+$$\mathbf{k}\mathbf{k}^\top=\operatorname{diag}\!\Big(\operatorname{diag}(\mathbf{k}_x^2),\,\mathbf{0}\Big),
+\qquad
+\mathbf{M}=\mathsf{ep2}\,\mathsf{kp}-\mathbf{k}\mathbf{k}^\top
+=\operatorname{diag}\!\Big(\mathcal{C}\omega^2-\operatorname{diag}(\mathbf{k}_x^2),\;
+\mathcal{C}\big(\omega^2 I-\operatorname{diag}(\mathbf{k}_x)\mathsf{epinv}\operatorname{diag}(\mathbf{k}_x)\big)\Big).$$
+The $2n\times2n$ eigenproblem decouples into two $n\times n$ ones (4× fewer
+`zgeev` flops). The off-diagonal blocks are also exactly zero for
+D4-symmetric 2D patterns at normal incidence (verified off/on = 0).
+
+#### 7.7.6 Block-lower-triangular M — QUASI-1D OBLIQUE (ky₀ ≠ 0)
+
+For a y-invariant grating the harmonic set is still 1D, so
+$\mathbf{k}_y=\mathsf{ky_0}\mathbf{1}$ (constant):
+$$\mathsf{kp}=\begin{bmatrix}
+\omega^2 I-\mathsf{ky_0}^2\mathsf{epinv} &
+\mathsf{ky_0}\,\mathsf{epinv}\operatorname{diag}(\mathbf{k}_x)\\[2pt]
+\mathsf{ky_0}\operatorname{diag}(\mathbf{k}_x)\mathsf{epinv} &
+\omega^2 I-\operatorname{diag}(\mathbf{k}_x)\mathsf{epinv}\operatorname{diag}(\mathbf{k}_x)
+\end{bmatrix},\quad
+\mathbf{k}\mathbf{k}^\top=\begin{bmatrix}
+\operatorname{diag}(\mathbf{k}_x^2) & \mathsf{ky_0}\operatorname{diag}(\mathbf{k}_x)\\[2pt]
+\mathsf{ky_0}\operatorname{diag}(\mathbf{k}_x) & \mathsf{ky_0}^2 I
+\end{bmatrix}.$$
+The top-right block of $\mathbf{M}=\mathsf{ep2}\,\mathsf{kp}-\mathbf{k}\mathbf{k}^\top$ is
+$$\mathbf{M}_{12}=\mathcal{C}\,\mathsf{ky_0}\,\mathsf{epinv}\operatorname{diag}(\mathbf{k}_x)
+-\mathsf{ky_0}\operatorname{diag}(\mathbf{k}_x)
+=\mathsf{ky_0}\big(\mathcal{C}\,\mathsf{epinv}-I\big)\operatorname{diag}(\mathbf{k}_x)=0,$$
+because $\mathcal{C}\,\mathsf{epinv}=I$. The bottom-left block does **not**
+vanish:
+$$\mathbf{M}_{21}=\mathsf{ky_0}\Big(\mathcal{C}\operatorname{diag}(\mathbf{k}_x)
+\mathcal{C}^{-1}-\operatorname{diag}(\mathbf{k}_x)\Big)\neq\mathbf{0}.$$
+$\mathbf{M}$ is therefore block-**lower-triangular**, so
+$\det(\mathbf{M}-\lambda I)=\det(\mathbf{M}_{11}-\lambda I)\det(\mathbf{M}_{22}-\lambda I)$:
+the **eigenvalues** split into two $n$-problems. The eigenvectors stay
+coupled — for $\lambda_A$ with $\mathbf{M}_{11}\mathbf{a}=\lambda_A\mathbf{a}$
+the second block forces $(\mathbf{M}_{22}-\lambda_A I)\mathbf{v}=-\mathbf{M}_{21}\mathbf{a}$.
+Using the eigendecomposition of $\mathbf{M}_{22}$,
+$$(\mathbf{M}_{22}-\lambda_{A,j}I)^{-1}=\sum_i
+\frac{\Phi_C[:,i]\,\Phi_C^{-1}[i,:]}{\lambda_{C,i}-\lambda_{A,j}},$$
+gives the exact reconstruction
+$$\phi=\begin{bmatrix}\Phi_A & \mathbf{0}\\ V & \Phi_C\end{bmatrix},\qquad
+V=-\Phi_C\Big(\big(\Phi_C^{-1}\mathbf{M}_{21}\Phi_A\big)\oslash D\Big),\qquad
+D_{ij}=\lambda_{C,i}-\lambda_{A,j},$$
+where $\oslash$ is element-wise division. Cost: two $n\times n$ `zgeev` +
+O(n³) coupling, vs one $2n\times2n$ `zgeev`; **bit-identical R** to the full
+solve (verified to 17 digits). A guard falls back to the full solve if a TE/TM
+pair becomes exactly degenerate ($\min|D|\to0$).
+
+#### 7.7.7 TE/TM-decoupled S-matrix path (QUASI-1D NORMAL)
+
+With block-diagonal $\mathsf{kp},\phi,\mathbf{q}$, every interface matrix
+($\mathbf{Q}=\phi_\ell^{-1}\phi_{\ell+1}$, $\mathbf{P}=\operatorname{diag}(\mathbf{q}_\ell)
+(\mathsf{kp}_\ell\phi_\ell)^{-1}\mathsf{kp}_{\ell+1}\phi_{\ell+1}
+\operatorname{diag}(1/\mathbf{q}_{\ell+1})$, $\mathbf{T}_{11},\mathbf{T}_{12}$)
+is block-diagonal, so the Redheffer recursion decouples into two independent
+$n\times n$ systems. The grid-interface prefix and the cascade run per
+polarization on $n\times n$ blocks (`bstep`) — 4× fewer flops — and the result
+is reassembled as $\mathbf{S}=\operatorname{diag}(\mathbf{S}_{\mathrm{TE}},
+\mathbf{S}_{\mathrm{TM}})$. Identical to the general path to ~4e-15.
+
+#### 7.7.8 Applicability of the block shortcuts
+
+The block-diagonal (7.7.5) and block-lower-triangular (7.7.6) eig shortcuts
+apply **only** when
+1. the geometry is y-invariant (quasi-1D) so $\mathbf{k}_y$ is constant across
+   harmonics — otherwise
+   $\mathbf{M}_{12}=\mathcal{C}\operatorname{diag}(\mathbf{k}_y)\mathsf{epinv}\operatorname{diag}(\mathbf{k}_x)-\operatorname{diag}(\mathbf{k}_x\cdot\mathbf{k}_y)\neq\mathbf{0}$;
+   and
+2. the permittivity is isotropic, so $\mathcal{C}\,\mathsf{epinv}=I$.
+
+For arbitrary 2D layouts at oblique incidence neither holds, and the code
+**automatically falls back** to the full $2n\times2n$ `zgeev` — the detection
+inspects the actual $\mathbf{M}$ (off-diagonal-block norms vs a 1e-10 relative
+threshold), so results are always correct, never silently wrong.
 
 ---
 
