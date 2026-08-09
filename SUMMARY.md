@@ -785,14 +785,14 @@ has; they never change the model.
 **Notation.** $n\equiv n_G$ = harmonic count, $N=2n$ = block size,
 $\mathbf{k}_x,\mathbf{k}_y\in\mathbb{C}^n$ = transverse wavevectors,
 $\mathcal{C}_{ij}=\hat\varepsilon(\mathbf{G}_i-\mathbf{G}_j)$ = permittivity
-Toeplitz convolution matrix, $\mathsf{ep2}=\operatorname{diag}(\mathcal{C},\mathcal{C})$,
+Toeplitz convolution matrix, $\mathsf{ep2}=\mathrm{diag}(\mathcal{C},\mathcal{C})$,
 $\mathsf{epinv}=\mathcal{C}^{-1}$, $\omega$ = complex frequency.
 
 #### 7.7.1 Diagonal phase factors (Redheffer step)
 
 The star-product step needs the diagonal phase matrices
-$\mathbf{d}_1=\operatorname{diag}(e^{iq_\ell t_\ell})$,
-$\mathbf{d}_2=\operatorname{diag}(e^{iq_{\ell+1}t_{\ell+1}})$. Kept as
+$\mathbf{d}_1=\mathrm{diag}(e^{iq_\ell t_\ell})$,
+$\mathbf{d}_2=\mathrm{diag}(e^{iq_{\ell+1}t_{\ell+1}})$. Kept as
 *vectors* and applied with `.asDiagonal()`, products become O(n) row scalings
 instead of O(n³) dense products:
 $$\big(\mathbf{d}_1\mathbf{S}_{12}\big)_{ij}=d_{1,i}\,S_{12,ij}.$$
@@ -803,7 +803,7 @@ $\mathbf{S}_{22}\mathbf{T}_{11}\mathbf{d}_2$ all become O(n²) scalings).
 #### 7.7.2 Block-wise Volume_integral (PLAN §10.4)
 
 Original:
-$$\mathrm{val}=\operatorname{tr}\!\Big(\mathbf{abM}\,\mathbf{F}^\dagger
+$$\mathrm{val}=\mathrm{tr}\!\Big(\mathbf{abM}\,\mathbf{F}^\dagger
 \mathbf{M}_{\mathrm{tot}}\mathbf{F}\Big),\qquad
 \mathbf{abM}=\mathbf{ab}\,\mathbf{ab}^\dagger\odot\mathbf{M}_t,$$
 with $\mathbf{ab}=[\mathbf{a}_i;\mathbf{a}_b]$ and the block forms
@@ -812,7 +812,7 @@ $$\mathbf{F}=\begin{bmatrix}\mathbf{F}_{xy} & -\mathbf{F}_{xy}\\
 \mathbf{M}_t=\begin{bmatrix}\mathbf{M}_{aa}&\mathbf{M}_{ab}\\
 \mathbf{M}_{ab}&\mathbf{M}_{aa}\end{bmatrix}.$$
 The interior product collapses onto $2n\times2n$ blocks
-$\big(\mathbf{M}_{xy}=\operatorname{diag}(\mathbf{M}_x,\mathbf{M}_y)\big)$:
+$\big(\mathbf{M}_{xy}=\mathrm{diag}(\mathbf{M}_x,\mathbf{M}_y)\big)$:
 $$\mathbf{T}=\mathbf{F}^\dagger\mathbf{M}_{\mathrm{tot}}\mathbf{F}
 =\begin{bmatrix}\mathbf{A}&\mathbf{B}\\ \mathbf{B}&\mathbf{A}\end{bmatrix},\qquad
 \mathbf{A}=\mathbf{F}_{xy}^\dagger\mathbf{M}_{xy}\mathbf{F}_{xy}
@@ -861,15 +861,15 @@ sequential path to ~4e-15.
 #### 7.7.5 Block-diagonal M — QUASI-1D NORMAL (ky₀ = 0)
 
 With the 1D harmonic set and $\mathbf{k}_y=\mathbf{0}$:
-$$\mathbf{J}_k=\begin{bmatrix}\mathbf{0}\\ \operatorname{diag}(\mathbf{k}_x)\end{bmatrix}
+$$\mathbf{J}_k=\begin{bmatrix}\mathbf{0}\\ \mathrm{diag}(\mathbf{k}_x)\end{bmatrix}
 \;\Rightarrow\;
-\mathsf{kp}=\operatorname{diag}\!\Big(\omega^2 I,\;
-\omega^2 I-\operatorname{diag}(\mathbf{k}_x)\,\mathsf{epinv}\,\operatorname{diag}(\mathbf{k}_x)\Big),$$
-$$\mathbf{k}\mathbf{k}^\top=\operatorname{diag}\!\Big(\operatorname{diag}(\mathbf{k}_x^2),\,\mathbf{0}\Big),
+\mathsf{kp}=\mathrm{diag}\!\Big(\omega^2 I,\;
+\omega^2 I-\mathrm{diag}(\mathbf{k}_x)\,\mathsf{epinv}\,\mathrm{diag}(\mathbf{k}_x)\Big),$$
+$$\mathbf{k}\mathbf{k}^\top=\mathrm{diag}\!\Big(\mathrm{diag}(\mathbf{k}_x^2),\,\mathbf{0}\Big),
 \qquad
 \mathbf{M}=\mathsf{ep2}\,\mathsf{kp}-\mathbf{k}\mathbf{k}^\top
-=\operatorname{diag}\!\Big(\mathcal{C}\omega^2-\operatorname{diag}(\mathbf{k}_x^2),\;
-\mathcal{C}\big(\omega^2 I-\operatorname{diag}(\mathbf{k}_x)\mathsf{epinv}\operatorname{diag}(\mathbf{k}_x)\big)\Big).$$
+=\mathrm{diag}\!\Big(\mathcal{C}\omega^2-\mathrm{diag}(\mathbf{k}_x^2),\;
+\mathcal{C}\big(\omega^2 I-\mathrm{diag}(\mathbf{k}_x)\mathsf{epinv}\mathrm{diag}(\mathbf{k}_x)\big)\Big).$$
 The $2n\times2n$ eigenproblem decouples into two $n\times n$ ones (4× fewer
 `zgeev` flops). The off-diagonal blocks are also exactly zero for
 D4-symmetric 2D patterns at normal incidence (verified off/on = 0).
@@ -880,22 +880,22 @@ For a y-invariant grating the harmonic set is still 1D, so
 $\mathbf{k}_y=\mathsf{ky_0}\mathbf{1}$ (constant):
 $$\mathsf{kp}=\begin{bmatrix}
 \omega^2 I-\mathsf{ky_0}^2\mathsf{epinv} &
-\mathsf{ky_0}\,\mathsf{epinv}\operatorname{diag}(\mathbf{k}_x)\\[2pt]
-\mathsf{ky_0}\operatorname{diag}(\mathbf{k}_x)\mathsf{epinv} &
-\omega^2 I-\operatorname{diag}(\mathbf{k}_x)\mathsf{epinv}\operatorname{diag}(\mathbf{k}_x)
+\mathsf{ky_0}\,\mathsf{epinv}\mathrm{diag}(\mathbf{k}_x)\\[2pt]
+\mathsf{ky_0}\mathrm{diag}(\mathbf{k}_x)\mathsf{epinv} &
+\omega^2 I-\mathrm{diag}(\mathbf{k}_x)\mathsf{epinv}\mathrm{diag}(\mathbf{k}_x)
 \end{bmatrix},\quad
 \mathbf{k}\mathbf{k}^\top=\begin{bmatrix}
-\operatorname{diag}(\mathbf{k}_x^2) & \mathsf{ky_0}\operatorname{diag}(\mathbf{k}_x)\\[2pt]
-\mathsf{ky_0}\operatorname{diag}(\mathbf{k}_x) & \mathsf{ky_0}^2 I
+\mathrm{diag}(\mathbf{k}_x^2) & \mathsf{ky_0}\mathrm{diag}(\mathbf{k}_x)\\[2pt]
+\mathsf{ky_0}\mathrm{diag}(\mathbf{k}_x) & \mathsf{ky_0}^2 I
 \end{bmatrix}.$$
 The top-right block of $\mathbf{M}=\mathsf{ep2}\,\mathsf{kp}-\mathbf{k}\mathbf{k}^\top$ is
-$$\mathbf{M}_{12}=\mathcal{C}\,\mathsf{ky_0}\,\mathsf{epinv}\operatorname{diag}(\mathbf{k}_x)
--\mathsf{ky_0}\operatorname{diag}(\mathbf{k}_x)
-=\mathsf{ky_0}\big(\mathcal{C}\,\mathsf{epinv}-I\big)\operatorname{diag}(\mathbf{k}_x)=0,$$
+$$\mathbf{M}_{12}=\mathcal{C}\,\mathsf{ky_0}\,\mathsf{epinv}\mathrm{diag}(\mathbf{k}_x)
+-\mathsf{ky_0}\mathrm{diag}(\mathbf{k}_x)
+=\mathsf{ky_0}\big(\mathcal{C}\,\mathsf{epinv}-I\big)\mathrm{diag}(\mathbf{k}_x)=0,$$
 because $\mathcal{C}\,\mathsf{epinv}=I$. The bottom-left block does **not**
 vanish:
-$$\mathbf{M}_{21}=\mathsf{ky_0}\Big(\mathcal{C}\operatorname{diag}(\mathbf{k}_x)
-\mathcal{C}^{-1}-\operatorname{diag}(\mathbf{k}_x)\Big)\neq\mathbf{0}.$$
+$$\mathbf{M}_{21}=\mathsf{ky_0}\Big(\mathcal{C}\mathrm{diag}(\mathbf{k}_x)
+\mathcal{C}^{-1}-\mathrm{diag}(\mathbf{k}_x)\Big)\neq\mathbf{0}.$$
 $\mathbf{M}$ is therefore block-**lower-triangular**, so
 $\det(\mathbf{M}-\lambda I)=\det(\mathbf{M}_{11}-\lambda I)\det(\mathbf{M}_{22}-\lambda I)$:
 the **eigenvalues** split into two $n$-problems. The eigenvectors stay
@@ -916,13 +916,13 @@ pair becomes exactly degenerate ($\min|D|\to0$).
 #### 7.7.7 TE/TM-decoupled S-matrix path (QUASI-1D NORMAL)
 
 With block-diagonal $\mathsf{kp},\phi,\mathbf{q}$, every interface matrix
-($\mathbf{Q}=\phi_\ell^{-1}\phi_{\ell+1}$, $\mathbf{P}=\operatorname{diag}(\mathbf{q}_\ell)
+($\mathbf{Q}=\phi_\ell^{-1}\phi_{\ell+1}$, $\mathbf{P}=\mathrm{diag}(\mathbf{q}_\ell)
 (\mathsf{kp}_\ell\phi_\ell)^{-1}\mathsf{kp}_{\ell+1}\phi_{\ell+1}
-\operatorname{diag}(1/\mathbf{q}_{\ell+1})$, $\mathbf{T}_{11},\mathbf{T}_{12}$)
+\mathrm{diag}(1/\mathbf{q}_{\ell+1})$, $\mathbf{T}_{11},\mathbf{T}_{12}$)
 is block-diagonal, so the Redheffer recursion decouples into two independent
 $n\times n$ systems. The grid-interface prefix and the cascade run per
 polarization on $n\times n$ blocks (`bstep`) — 4× fewer flops — and the result
-is reassembled as $\mathbf{S}=\operatorname{diag}(\mathbf{S}_{\mathrm{TE}},
+is reassembled as $\mathbf{S}=\mathrm{diag}(\mathbf{S}_{\mathrm{TE}},
 \mathbf{S}_{\mathrm{TM}})$. Identical to the general path to ~4e-15.
 
 #### 7.7.8 Applicability of the block shortcuts
@@ -931,7 +931,7 @@ The block-diagonal (7.7.5) and block-lower-triangular (7.7.6) eig shortcuts
 apply **only** when
 1. the geometry is y-invariant (quasi-1D) so $\mathbf{k}_y$ is constant across
    harmonics — otherwise
-   $\mathbf{M}_{12}=\mathcal{C}\operatorname{diag}(\mathbf{k}_y)\mathsf{epinv}\operatorname{diag}(\mathbf{k}_x)-\operatorname{diag}(\mathbf{k}_x\cdot\mathbf{k}_y)\neq\mathbf{0}$;
+   $\mathbf{M}_{12}=\mathcal{C}\mathrm{diag}(\mathbf{k}_y)\mathsf{epinv}\mathrm{diag}(\mathbf{k}_x)-\mathrm{diag}(\mathbf{k}_x\cdot\mathbf{k}_y)\neq\mathbf{0}$;
    and
 2. the permittivity is isotropic, so $\mathcal{C}\,\mathsf{epinv}=I$.
 
