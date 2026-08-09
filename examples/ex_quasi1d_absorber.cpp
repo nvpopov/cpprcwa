@@ -28,6 +28,9 @@
 //                                             #   OUT_grid.txt    real-space |E|² grid
 //                                             #   OUT_vscan.txt   vertical cross-section (x sweep)
 //                                             #   OUT_perf.txt
+//   ex_quasi1d_absorber --quasi1d ...         # restrict to x-only harmonics
+//   ex_quasi1d_absorber --theta DEG --phi DEG # oblique incidence
+//   ex_quasi1d_absorber --pol p|s             # polarization (default p)
 #include <cpprcwa/cpprcwa.h>
 #include <cstdio>
 #include <cstdlib>
@@ -67,10 +70,16 @@ int main(int argc, char** argv) {
     std::string  out_prefix;
     int threads = 0;   // 0 = auto
     bool quasi1d = false;   // restrict to x-only harmonics (exact: y-invariant bar)
+    double theta_deg = 0.0;
+    double phi_deg   = 0.0;
+    char pol = 'p';        // 'p' or 's' polarization
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--field") == 0 && i + 1 < argc) out_prefix = argv[++i];
         else if (std::strcmp(argv[i], "--threads") == 0 && i + 1 < argc) threads = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--quasi1d") == 0) quasi1d = true;
+        else if (std::strcmp(argv[i], "--theta") == 0 && i + 1 < argc) theta_deg = std::atof(argv[++i]);
+        else if (std::strcmp(argv[i], "--phi") == 0 && i + 1 < argc) phi_deg = std::atof(argv[++i]);
+        else if (std::strcmp(argv[i], "--pol") == 0 && i + 1 < argc) pol = argv[++i][0];
         else pos.push_back(std::atof(argv[i]));
     }
     const int    nG_req = pos.size() > 0 ? (int)pos[0] : 201;
@@ -100,8 +109,8 @@ int main(int argc, char** argv) {
     cfg.L1 = Eigen::Vector2d(Lx, 0.0);
     cfg.L2 = Eigen::Vector2d(0.0, Ly);
     cfg.freq = complex(1.0 / lambda, 0.0);
-    cfg.theta = 0.0;
-    cfg.phi   = 0.0;
+    cfg.theta = theta_deg * M_PI / 180.0;
+    cfg.phi   = phi_deg   * M_PI / 180.0;
     cfg.quasi1d = quasi1d;
 
     RCWA solver(cfg);
@@ -120,7 +129,8 @@ int main(int argc, char** argv) {
     auto t1 = std::chrono::steady_clock::now();
 
     PlaneWaveExcitation exc;
-    exc.p_amp = 1.0;
+    if (pol == 's') exc.s_amp = 1.0;
+    else            exc.p_amp = 1.0;
     solver.MakeExcitationPlanewave(exc);
 
     RTResult rt = solver.RT_Solve(/*normalize=*/true);
