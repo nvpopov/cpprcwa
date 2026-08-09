@@ -33,16 +33,13 @@ using cpprcwa::complex;
 
 // OpenBLAS runtime thread control (guarded; only linked when BLAS is OpenBLAS).
 // Many small matrices (2nG×2nG) saturate at a modest thread count; using all
-// cores causes thread-pool overhead. Defaults to min(cores, 6), overridable
-// via the OPENBLAS_NUM_THREADS environment variable or the --threads argument.
+// logical cores (incl. Hyper-Threading siblings) causes thread-pool overhead.
+// Defaults to the physical core count, overridable via the
+// OPENBLAS_NUM_THREADS environment variable or the --threads argument.
 extern "C" {
 void openblas_set_num_threads(int);
 }
-static int choose_blas_threads(int ncores) {
-    const char* env = std::getenv("OPENBLAS_NUM_THREADS");
-    if (env && *env) return std::atoi(env);
-    return ncores < 6 ? ncores : 6;
-}
+#include "blas_threads.h"
 
 namespace {
 
@@ -76,7 +73,7 @@ int main(int argc, char** argv) {
         if (std::strcmp(argv[i], "--threads") == 0) threads = std::atoi(argv[i + 1]);
     }
     if (threads > 0) openblas_set_num_threads(threads);
-    else openblas_set_num_threads(choose_blas_threads((int)std::thread::hardware_concurrency()));
+    else openblas_set_num_threads(blas_threads::choose((int)std::thread::hardware_concurrency()));
 
     // Patterned layer: TaN inside the 60×60 nm rectangle, vacuum elsewhere.
     std::vector<complex> epgrid((size_t)Nx * Ny, n_vac);

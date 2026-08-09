@@ -42,11 +42,7 @@ using cpprcwa::complex;
 extern "C" {
 void openblas_set_num_threads(int);
 }
-static int choose_blas_threads(int ncores) {
-    const char* env = std::getenv("OPENBLAS_NUM_THREADS");
-    if (env && *env) return std::atoi(env);
-    return ncores < 6 ? ncores : 6;
-}
+#include "blas_threads.h"
 
 namespace {
 
@@ -85,7 +81,7 @@ int main(int argc, char** argv) {
     const int    Nx     = pos.size() > 5 ? (int)pos[5] : 1000;
     const int    Ny     = 4;
     if (threads > 0) openblas_set_num_threads(threads);
-    else openblas_set_num_threads(choose_blas_threads((int)std::thread::hardware_concurrency()));
+    else openblas_set_num_threads(blas_threads::choose((int)std::thread::hardware_concurrency()));
 
     const double Ly = nly * lambda;
 
