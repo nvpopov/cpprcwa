@@ -53,9 +53,13 @@ endif()
 
 find_package(FFTW3 REQUIRED)
 
-# Prefer OpenBLAS: it provides both BLAS and LAPACK and avoids incomplete
-# Intel MKL installs (which can fail at runtime). Override with
-#   -DBLA_VENDOR=Generic   (or any CMake FindBLAS vendor)
+# Prefer OpenBLAS: it provides both BLAS and LAPACK, works out of the box, and
+# avoids incomplete Intel MKL installs (Ubuntu's intel-mkl packages can fail at
+# runtime with undefined-symbol errors; see README "Intel MKL backend").
+# Override with
+#   -DBLA_VENDOR=Intel10_64lp          # threaded MKL (libiomp5)
+#   -DBLA_VENDOR=Intel10_64lp_seq      # sequential MKL
+#   -DBLA_VENDOR=Generic               # or any CMake FindBLAS vendor
 set(BLA_VENDOR "OpenBLAS" CACHE STRING "BLAS/LAPACK vendor to use")
 find_package(BLAS REQUIRED)
 find_package(LAPACK REQUIRED)

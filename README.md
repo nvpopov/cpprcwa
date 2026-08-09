@@ -63,6 +63,43 @@ so these flags mainly speed up the surrounding C++ scalar code (~5–10%
 wall-clock); they are verified to leave R and the grcwa field agreement at
 machine precision.
 
+### Intel MKL backend
+
+OpenBLAS is the default. Intel MKL can give a significant speedup of the
+patterned-layer eigen-solve (`zgeev`), which OpenBLAS runs single-threaded:
+
+- `zgeev` (2nG×2nG, n=266): OpenBLAS ~126 ms vs MKL ~80 ms at 6 threads
+  (~1.6×); the gap grows with matrix size (~2× at n=530).
+- End-to-end oblique quasi-1D (nG=187): ~1.5× faster total
+  (1268 ms → ~830 ms).
+
+To build with MKL (threaded, Intel OpenMP):
+
+```bash
+cmake -S . -B build-mkl -DCMAKE_BUILD_TYPE=Release -DBLA_VENDOR=Intel10_64lp
+cmake --build build-mkl -j
+```
+
+`-DBLA_VENDOR=Intel10_64lp_seq` selects sequential MKL instead. Control the
+thread count at runtime with `MKL_NUM_THREADS` / `OMP_NUM_THREADS`.
+
+**Known caveats (Ubuntu `intel-mkl` packages, 2020.x):**
+
+- Loading MKL into a Python process (e.g. the `cpprcwa` bindings) can fail
+  with `undefined symbol: mkl_sparse_optimize_bsr_trsm_i8` because the
+  dispatcher's `libmkl_avx2.so` is incomplete. Workaround:
+  ```bash
+  export LD_PRELOAD="$(dpkg -L intel-mkl | grep 'libiomp5.so$') \
+  $(dpkg -L intel-mkl | grep 'libmkl_intel_thread.so$') \
+  $(dpkg -L intel-mkl | grep 'libmkl_core.so$') \
+  $(dpkg -L intel-mkl | grep 'libmkl_intel_lp64.so$') \
+  $(dpkg -L intel-mkl | grep 'libmkl_avx2.so$')"
+  ```
+- Do **not** raise the OpenBLAS thread count to speed up `zgeev`: OpenBLAS's
+  `zgeev` is LAPACK-serial, so extra threads only add pool overhead (it got
+  *slower*: 126 ms → 393 ms at n=266). MKL threads `zgeev` internally and
+  benefits from `MKL_NUM_THREADS`.
+
 ## Python bindings (grcwa drop-in)
 
 When `CPPRCWA_BUILD_PYTHON=ON`, the build produces `cpprcwa.cpython-*.so`
@@ -99,10 +136,12 @@ original to machine precision. Anisotropic `GridLayer_geteps` and
   `Init_Setup`), turning 80 eigen/matrix setups into ~5 for periodic stacks.
 - **Quasi-1D structures** (`cfg.quasi1d`): exact reductions for y-invariant
   geometries — the harmonic set is filtered to the x-only row, and the
-  all-uniform multilayer suffix is solved with a scalar (diagonal) recursion
-  combined via an overlapping cascade. Measured ~30× faster than grcwa
-  (`ex_quasi1d_absorber --quasi1d`, nG=201), with machine-precision
-  agreement.
+  all-uniform multilayer suffix is solved with a per-harmonic recursion
+  (scalar when `ky0=0`, exact 2×2 Ex–Ey blocks for oblique incidence) combined
+  via an overlapping cascade. Valid for any (θ, φ) — results match full-2D to
+  machine precision. Measured ~30× faster than grcwa
+  (`ex_quasi1d_absorber --quasi1d`, nG=201), and ~40–90× faster than the
+  general 2D path at oblique incidence (nG=400).
 - Measured on the EUV absorber (nG=97): ~2× faster than the naive build, and
   ≈5× faster than grcwa overall, with machine-precision field agreement.
 

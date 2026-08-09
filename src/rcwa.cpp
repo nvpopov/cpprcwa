@@ -6,6 +6,8 @@
 #include "internal/utils.h"
 #include <cpprcwa/errors.h>
 #include <cmath>
+#include <chrono>
+#include <cstdlib>
 
 namespace cpprcwa {
 
@@ -168,13 +170,22 @@ void RCWA::GridLayer_geteps(const std::vector<complex>& ep_all_isotropic) {
         double dN = 1.0 / ((double)Nx * Ny);
         std::vector<complex> slice(ep_all_isotropic.begin() + offset,
                                    ep_all_isotropic.begin() + offset + (size_t)Nx * Ny);
+        auto t_e0 = std::chrono::steady_clock::now();
         auto result = Epsilon_fft(dN, slice, Nx, Ny, G_);
+        auto t_e1 = std::chrono::steady_clock::now();
         patterned_epinv_.push_back(result.epsinv);
         patterned_ep2_.push_back(result.eps2);
         // Fill kp/q/phi for this layer
         MakeKPMatrix_patterned(omega_, kx_, ky_, result.epsinv, result.eps2, kp_list_[li]);
+        auto t_e2 = std::chrono::steady_clock::now();
         SolveLayerEigensystem_patterned(omega_, kx_, ky_, kp_list_[li], result.eps2,
                                         q_list_[li], phi_list_[li]);
+        auto t_e3 = std::chrono::steady_clock::now();
+        if (std::getenv("CPPRCWA_TIMING")) {
+            using ms = std::chrono::duration<double, std::milli>;
+            std::fprintf(stderr, "[grid] Epsilon_fft=%.1f MakeKP=%.1f eig=%.1f ms\n",
+                         ms(t_e1-t_e0).count(), ms(t_e2-t_e1).count(), ms(t_e3-t_e2).count());
+        }
         offset += (size_t)Nx * Ny;
         ++grid_idx;
     }
@@ -241,12 +252,20 @@ void RCWA::SolveLayerEigensystem_patterned(complex omega, const ComplexVector& k
     ComplexMatrix k_mat = ComplexMatrix::Zero(2 * nG, nG);
     k_mat.topRows(nG).diagonal()    = kx;
     k_mat.bottomRows(nG).diagonal() = ky;
+    auto tt0 = std::chrono::steady_clock::now();
     ComplexMatrix kkT = k_mat * k_mat.transpose();
     ComplexMatrix M = ep2 * kp - kkT;
+    auto tt1 = std::chrono::steady_clock::now();
     ComplexVector evals(n2);
     phi.resize(n2, n2);
     internal::zgeev(n2, M.data(), (int)M.outerStride(), evals,
                     phi.data(), (int)phi.outerStride());
+    auto tt2 = std::chrono::steady_clock::now();
+    if (std::getenv("CPPRCWA_TIMING")) {
+        using ms = std::chrono::duration<double, std::milli>;
+        std::fprintf(stderr, "[eig] buildM=%.1f zgeev=%.1f ms\n",
+                     ms(tt1-tt0).count(), ms(tt2-tt1).count());
+    }
     // q = sqrt(evals) with branch cut
     for (int i = 0; i < n2; ++i) evals(i) = std::sqrt(evals(i));
     q = apply_branch_cut(evals);
@@ -349,11 +368,21 @@ void RCWA::GetSMatrix(int indi, int indj,
         ++m;   // layers [m, indj] are all uniform (if m <= indj)
         if (m <= indj) {
             // L = S(indi, m) — general prefix (may contain patterned layers).
+            auto tt0 = std::chrono::steady_clock::now();
             ComplexMatrix L11 = ComplexMatrix::Identity(n2, n2);
             ComplexMatrix L22 = ComplexMatrix::Identity(n2, n2);
             ComplexMatrix L12 = ComplexMatrix::Zero(n2, n2);
             ComplexMatrix L21 = ComplexMatrix::Zero(n2, n2);
-            for (int l = indi; l < m; ++l) step(l, L11, L12, L21, L22);
+            for (int l = indi; l < m; ++l) {
+                auto ts0 = std::chrono::steady_clock::now();
+                step(l, L11, L12, L21, L22);
+                if (std::getenv("CPPRCWA_TIMING")) {
+                    using ms = std::chrono::duration<double, std::milli>;
+                    std::fprintf(stderr, "[prefix] layer %d->%d: %.1f ms\n", l, l+1,
+                                 ms(std::chrono::steady_clock::now()-ts0).count());
+                }
+            }
+            auto tt1 = std::chrono::steady_clock::now();
 
             // R = S(m, indj) — all-uniform suffix. For each harmonic h the
             // 2×2 block couples (Ex_h, Ey_h) only, so run a per-harmonic
@@ -443,7 +472,7 @@ void RCWA::GetSMatrix(int indi, int indj,
                 R21 = scatter(r21);
                 R22 = scatter(r22);
             }
-
+            auto tt2 = std::chrono::steady_clock::now();
 
             // Overlapping cascade: L = S(indi, m), R = S(m, indj) share layer m.
             // M = inv(I - L12·R21); S11=R11·M·L11, S12=R11·M·L12·R22+R12,
@@ -456,6 +485,12 @@ void RCWA::GetSMatrix(int indi, int indj,
             S12 = R11 * ML12R22 + R12;
             S21 = L21 + L22 * (R21 * ML11);
             S22 = L22 * (R21 * ML12R22) + L22 * R22;
+            if (std::getenv("CPPRCWA_TIMING")) {
+                using ms = std::chrono::duration<double, std::milli>;
+                std::fprintf(stderr, "[S] prefix=%.1f suffix=%.1f cascade=%.1f ms\n",
+                             ms(tt1-tt0).count(), ms(tt2-tt1).count(),
+                             ms(std::chrono::steady_clock::now()-tt2).count());
+            }
             return;
         }
     }
