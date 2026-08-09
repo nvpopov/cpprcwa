@@ -37,6 +37,11 @@ struct RCWAConfig {
     // dropping them changes nothing but shrinks every matrix (≈1.8× fewer
     // harmonics for a 1D grating). Use only for genuinely 1D geometries.
     bool quasi1d = false;
+    // Print an estimate of the required peak memory (persistent layer
+    // storage + transient S-matrix / volume-integral workspaces) after
+    // Init_Setup(). All sizes depend only on nG and the layer structure, so
+    // the estimate is exact at that point (see RCWA::PrintMemoryReport).
+    bool report_memory = false;
 };
 
 // ── Layers ─────────────────────────────────────────────────────────────────

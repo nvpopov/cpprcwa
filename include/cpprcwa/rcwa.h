@@ -96,6 +96,14 @@ public:
     const std::vector<ComplexMatrix>& phi_list() const { return phi_list_; }
     const std::vector<ComplexMatrix>& kp_list() const { return kp_list_; }
     double normalization() const { return normalization_; }
+
+    // Print an estimate of the required peak memory to stdout: persistent
+    // layer storage (kp/q/phi per layer, patterned ε convolution matrices),
+    // the uniform-pair T-matrix cache, and the transient workspace peaks of
+    // RT_Solve (S-matrix) and Volume_integral. Called automatically at the
+    // end of Init_Setup() when config.report_memory is set.
+    void PrintMemoryReport() const;
+
     const std::vector<ComplexMatrix>& patterned_epinv_list() const { return patterned_epinv_; }
     const std::vector<ComplexMatrix>& patterned_ep2_list() const { return patterned_ep2_; }
 
@@ -129,6 +137,7 @@ private:
     Eigen::Vector2d L1_, L2_;
     double theta_, phi_;
     bool quasi1d_ = false;             // restrict harmonic set to j==0 (see RCWAConfig)
+    bool report_memory_ = false;       // print memory estimate after Init_Setup
     bool quasi1d_fastpath_ = false;    // quasi-1d: uniform-layer S-matrix is
                                        // block-diagonal (2×2 per harmonic), so the
                                        // per-harmonic recursion is exact for any ky0.

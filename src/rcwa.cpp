@@ -7,7 +7,9 @@
 #include <cpprcwa/errors.h>
 #include <cmath>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
+#include <set>
 
 namespace cpprcwa {
 
@@ -20,8 +22,8 @@ RCWA::RCWA(const RCWAConfig& config)
       L2_(config.L2),
       theta_(config.theta),
       phi_(config.phi),
-      quasi1d_(config.quasi1d) {}
-
+      quasi1d_(config.quasi1d),
+      report_memory_(config.report_memory) {}
 RCWA::RCWA(int nG, const std::vector<double>& L1,
            const std::vector<double>& L2, complex freq, double theta,
            double phi, int verbose, bool quasi1d)
@@ -133,6 +135,95 @@ void RCWA::Init_Setup(double Pscale, int Gmethod) {
         }
         ++uniform_idx;
     }
+
+    if (report_memory_) PrintMemoryReport();
+}
+
+void RCWA::PrintMemoryReport() const {
+    const int64_t cplx = static_cast<int64_t>(sizeof(complex));      // 16
+    const int64_t n    = nG_;
+    const int64_t n2   = 2 * n;
+    const int64_t full_mat = n2 * n2 * cplx;   // bytes per 2nG×2nG complex matrix
+
+    // ── Persistent storage (RCWA object lifetime) ──
+    int64_t persistent = 0;
+    for (int li = 0; li < Layer_N(); ++li) {
+        persistent += 2 * full_mat + n2 * cplx;      // kp + phi, q
+        if (layer_types_[li] == LayerType::Grid)
+            persistent += n * n * cplx + full_mat;   // patterned epinv + eps2
+    }
+    persistent += n * 2 * 4;                          // G_ (nG×2 int)
+    persistent += 2 * n * cplx;                       // kx_, ky_
+    persistent += 2 * n2 * cplx;                      // a0_, bN_
+
+    // ── Uniform-pair T-matrix cache ──
+    // Distinct (eps_l, eps_lp1) across consecutive uniform-uniform interfaces;
+    // each distinct pair caches T11 + T12 (2 full matrices).
+    int64_t pair_cache = 0;
+    {
+        struct EpsPairKey {
+            complex el, elp;
+            bool operator<(const EpsPairKey& o) const {
+                if (el.real() != o.el.real()) return el.real() < o.el.real();
+                if (el.imag() != o.el.imag()) return el.imag() < o.el.imag();
+                if (elp.real() != o.elp.real()) return elp.real() < o.elp.real();
+                return elp.imag() < o.elp.imag();
+            }
+        };
+        std::set<EpsPairKey> seen;
+        for (int li = 0; li + 1 < Layer_N(); ++li) {
+            if (layer_types_[li] != LayerType::Uniform ||
+                layer_types_[li + 1] != LayerType::Uniform)
+                continue;
+            seen.insert({uniform_eps_[material_idx_[li]],
+                         uniform_eps_[material_idx_[li + 1]]});
+        }
+        pair_cache = 2 * full_mat * static_cast<int64_t>(seen.size());
+    }
+
+    // ── Transient peaks ──
+    // GetSMatrix: one star-product step keeps ~20 live 2nG×2nG matrices
+    // (4 accumulated S + 2 phase d + 2 interface T + 8 star temporaries + a
+    // few inverse/product workspaces). Bounds the quasi-1D path too, whose
+    // all-uniform suffix is O(n) per harmonic (the grid-interface prefix still
+    // runs the general step at the reduced nG).
+    const int64_t smatrix_peak = 20 * full_mat;
+    // Volume_integral (block-wise, PLAN.md §10.4): never materializes 4nG×4nG
+    // or 3nG×3nG matrices. Peak is ~7 live 2nG×2nG matrices (Faxy, Mxy, C/D,
+    // A/B, Maa/Mab, W_A/W_B, qi/qj) + the nG×2nG Faz.
+    const int64_t volume_peak =
+        7 * (2 * n) * (2 * n) * cplx
+        + (n) * (2 * n) * cplx;
+
+    auto human = [](int64_t b) {
+        char buf[64];
+        if (b >= (int64_t)1 << 30)
+            std::snprintf(buf, sizeof buf, "%.2f GiB", b / (double)((int64_t)1 << 30));
+        else if (b >= (int64_t)1 << 20)
+            std::snprintf(buf, sizeof buf, "%.2f MiB", b / (double)((int64_t)1 << 20));
+        else if (b >= (int64_t)1 << 10)
+            std::snprintf(buf, sizeof buf, "%.2f KiB", b / (double)((int64_t)1 << 10));
+        else
+            std::snprintf(buf, sizeof buf, "%lld B", (long long)b);
+        return std::string(buf);
+    };
+
+    std::printf("Memory report (nG=%d, %d layers%s):\n",
+                (int)n, Layer_N(), quasi1d_ ? ", quasi-1D" : "");
+    std::printf("  persistent layer storage  : %14s  (%lld B)\n",
+                human(persistent).c_str(), (long long)persistent);
+    std::printf("  uniform-pair T cache      : %14s  (%lld B)\n",
+                human(pair_cache).c_str(), (long long)pair_cache);
+    std::printf("  RT_Solve transient peak   : %14s  (%lld B)\n",
+                human(smatrix_peak).c_str(), (long long)smatrix_peak);
+    std::printf("  Volume_integral transient : %14s  (%lld B)  [if used]\n",
+                human(volume_peak).c_str(), (long long)volume_peak);
+    std::printf("  estimated peak RSS (RT)   : %14s  (%lld B)\n",
+                human(persistent + pair_cache + smatrix_peak).c_str(),
+                (long long)(persistent + pair_cache + smatrix_peak));
+    std::printf("  estimated peak RSS (VolIn): %14s  (%lld B)\n",
+                human(persistent + pair_cache + volume_peak).c_str(),
+                (long long)(persistent + pair_cache + volume_peak));
 }
 
 void RCWA::MakeExcitationPlanewave(const PlaneWaveExcitation& exc) {
@@ -749,15 +840,19 @@ GridMatrix RCWA::Return_eps(int which_layer, int Nx, int Ny, const std::string& 
 
 // ── Post-processing (Phase 7) ───────────────────────────────────────────────
 
-// Matrix_zintegral (rcwa.py:607-639): generates 4nG×4nG matrix for the z-integral.
+// Matrix_zintegral (rcwa.py:607-639): Mt = [[Maa, Mab], [Mab, Maa]] where the
+// blocks Maa, Mab are each (2nG×2nG). Returned as two blocks so the full
+// 4nG×4nG Mt is never materialized (PLAN.md §10.4). The diagonal `shift`
+// stability term is applied only to qij = qj - conj(qi), not qij2 (rcwa.py:628).
 namespace {
-ComplexMatrix Matrix_zintegral(const ComplexVector& q, double thickness, double shift = 1e-12) {
-    int nG2 = q.size();
-    ComplexMatrix qi = q.replicate(1, nG2);              // qi[i,j] = q[i]
-    ComplexMatrix qj = q.transpose().replicate(nG2, 1);  // qj[i,j] = q[j]
+struct ZIntegralBlocks { ComplexMatrix Maa, Mab; };
+ZIntegralBlocks matrix_zintegral_blocks(const ComplexVector& q, double thickness,
+                                        double shift = 1e-12) {
+    int n2 = q.size();
+    ComplexMatrix qi = q.replicate(1, n2);              // qi[i,j] = q[i]
+    ComplexMatrix qj = q.transpose().replicate(n2, 1);  // qj[i,j] = q[j]
     complex I(0,1);
 
-    // qij = qj - conj(qi) + shift*I on the diagonal (stability term)
     ComplexMatrix qij = qj - qi.conjugate();
     qij.diagonal().array() += shift;
     ComplexMatrix Maa = ((qij * thickness * I).array().exp() - 1.0).matrix()
@@ -768,12 +863,7 @@ ComplexMatrix Matrix_zintegral(const ComplexVector& q, double thickness, double 
                         - (-qi.conjugate() * thickness * I).array().exp()).matrix())
                         .cwiseQuotient(I * qij2);
 
-    ComplexMatrix Mt(2 * nG2, 2 * nG2);
-    Mt.topLeftCorner(nG2, nG2)     = Maa;
-    Mt.topRightCorner(nG2, nG2)    = Mab;
-    Mt.bottomLeftCorner(nG2, nG2)  = Mab;
-    Mt.bottomRightCorner(nG2, nG2) = Maa;
-    return Mt;
+    return {std::move(Maa), std::move(Mab)};
 }
 } // namespace
 
@@ -782,7 +872,21 @@ complex RCWA::Volume_integral(int which_layer,
                               const ComplexMatrix& My,
                               const ComplexMatrix& Mz,
                               bool normalize) {
-    // rcwa.py:350-395
+    // rcwa.py:350-395, computed block-wise (PLAN.md §10.4).
+    //
+    // The original computes  val = trace(abM · F†·Mtotal·F)  with
+    //   abM    = outer(ab, conj(ab)) ⊙ Mt           (4nG×4nG, ~1 GiB @ nG=1000)
+    //   F      = [[Faxy, -Faxy], [Faz, Faz]]        (3nG×4nG)
+    //   Mtotal = block_diag(Mx, My, Mz)             (3nG×3nG)
+    //   Mt     = [[Maa, Mab], [Mab, Maa]]           (4nG×4nG)
+    // The block structure of F and Mt collapses the trace onto 2nG×2nG matrices:
+    //   Mxy = block_diag(Mx, My)
+    //   A   = Faxy†·Mxy·Faxy + Faz†·Mz·Faz
+    //   B   = -Faxy†·Mxy·Faxy + Faz†·Mz·Faz     (= A with the first term negated)
+    //   T   = F†·Mtotal·F = [[A, B], [B, A]]
+    // trace(abM·T) = Σ_{P,Q} a_Pᵀ (Mt_PQ ∘ T_QPᵀ) conj(a_Q)  (a_L=ai, a_R=bi):
+    // val = aiᵀ(Maa∘Aᵀ)conj(ai) + biᵀ(Maa∘Aᵀ)conj(bi)
+    //     + aiᵀ(Mab∘Bᵀ)conj(bi) + biᵀ(Mab∘Bᵀ)conj(ai)
     const ComplexMatrix& kp  = kp_list_[which_layer];
     const ComplexVector&  q  = q_list_[which_layer];
     const ComplexMatrix&  phi = phi_list_[which_layer];
@@ -799,38 +903,46 @@ complex RCWA::Volume_integral(int which_layer,
     ComplexVector ai, bi;
     SolveInterior(which_layer, a0_, bN_, ai, bi);
 
-    // ab = hstack(ai, bi) (4nG); abMatrix = outer(ab, conj(ab)) (4nG×4nG)
-    ComplexVector ab(4 * nG_);
-    ab.head(2 * nG_) = ai;
-    ab.tail(2 * nG_) = bi;
-    ComplexMatrix abMatrix = ab * ab.conjugate().transpose();
-    ComplexMatrix Mt = Matrix_zintegral(q, thickness_[which_layer]);
-    ComplexMatrix abM = abMatrix.cwiseProduct(Mt);
+    const int n2 = 2 * nG_;
 
-    // F (3nG × 4nG)
-    ComplexVector inv_omega_q = (complex(1,0) / (omega_ * q.array())).matrix();
-    ComplexMatrix Faxy = kp * phi * inv_omega_q.asDiagonal();      // 2nG × 2nG
-    ComplexMatrix Faz1 = (complex(1,0)/omega_) * epinv_mat * ky_.asDiagonal();
-    ComplexMatrix Faz2 = -(complex(1,0)/omega_) * epinv_mat * kx_.asDiagonal();
+    // Faxy (2nG×2nG) and Faz (nG×2nG) — F = [[Faxy, -Faxy], [Faz, Faz]]
+    ComplexMatrix Faxy = kp * phi * (complex(1,0) / (omega_ * q.array())).matrix().asDiagonal();
     ComplexMatrix Faz = ComplexMatrix::Zero(nG_, 2 * nG_);
-    Faz.leftCols(nG_)  = Faz1;
-    Faz.rightCols(nG_) = Faz2;
-    Faz = Faz * phi;                                               // nG × 2nG
+    {
+        ComplexMatrix Faz1 = (complex(1,0)/omega_) * epinv_mat * ky_.asDiagonal();
+        ComplexMatrix Faz2 = -(complex(1,0)/omega_) * epinv_mat * kx_.asDiagonal();
+        Faz.leftCols(nG_)  = Faz1;
+        Faz.rightCols(nG_) = Faz2;
+        Faz = Faz * phi;
+    }
 
-    ComplexMatrix F(3 * nG_, 4 * nG_);
-    F.topRows(2 * nG_).leftCols(2 * nG_)  =  Faxy;
-    F.topRows(2 * nG_).rightCols(2 * nG_) = -Faxy;
-    F.bottomRows(nG_).leftCols(2 * nG_)   = Faz;
-    F.bottomRows(nG_).rightCols(2 * nG_)  = Faz;
+    // A = C + D, B = D - C with C = Faxy†·Mxy·Faxy, D = Faz†·Mz·Faz
+    ComplexMatrix A, B;
+    {
+        ComplexMatrix Mxy = ComplexMatrix::Zero(n2, n2);
+        Mxy.topLeftCorner(nG_, nG_)     = Mx;
+        Mxy.bottomRightCorner(nG_, nG_) = My;
+        ComplexMatrix C = Faxy.adjoint() * (Mxy * Faxy);
+        ComplexMatrix D = Faz.adjoint() * (Mz * Faz);
+        A = C + D;
+        B = D - C;
+    }
 
-    // Mtotal = block_diag(Mx, My, Mz) (3nG × 3nG)
-    ComplexMatrix Mtotal = ComplexMatrix::Zero(3 * nG_, 3 * nG_);
-    Mtotal.topLeftCorner(nG_, nG_)      = Mx;
-    Mtotal.block(nG_, nG_, nG_, nG_)    = My;
-    Mtotal.bottomRightCorner(nG_, nG_)  = Mz;
+    // W_A = Maa∘Aᵀ, W_B = Mab∘Bᵀ (2nG×2nG each) — Mt blocks from z-integral.
+    ComplexMatrix W_A, W_B;
+    {
+        auto [Maa, Mab] = matrix_zintegral_blocks(q, thickness_[which_layer]);
+        W_A = Maa.cwiseProduct(A.transpose());
+        W_B = Mab.cwiseProduct(B.transpose());
+    }
 
-    // val = trace(abM @ (F^dagger Mtotal F))
-    complex val = (abM * (F.adjoint() * Mtotal * F)).trace();
+    // Scalar: f(x,y,W) = xᵀ·(W·conj(y)) summed element-wise (no conjugation on x).
+    ComplexVector cai = ai.conjugate();
+    ComplexVector cbi = bi.conjugate();
+    complex val = (ai.array() * (W_A * cai).array()).sum()
+                + (bi.array() * (W_A * cbi).array()).sum()
+                + (ai.array() * (W_B * cbi).array()).sum()
+                + (bi.array() * (W_B * cai).array()).sum();
     if (normalize) val *= normalization_;
     return val;
 }

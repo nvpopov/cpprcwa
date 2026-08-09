@@ -31,6 +31,7 @@
 //   ex_quasi1d_absorber --quasi1d ...         # restrict to x-only harmonics
 //   ex_quasi1d_absorber --theta DEG --phi DEG # oblique incidence
 //   ex_quasi1d_absorber --pol p|s             # polarization (default p)
+//   ex_quasi1d_absorber --mem                 # print required-memory estimate
 #include <cpprcwa/cpprcwa.h>
 #include <cstdio>
 #include <cstdlib>
@@ -70,6 +71,7 @@ int main(int argc, char** argv) {
     std::string  out_prefix;
     int threads = 0;   // 0 = auto
     bool quasi1d = false;   // restrict to x-only harmonics (exact: y-invariant bar)
+    bool report_mem = false;
     double theta_deg = 0.0;
     double phi_deg   = 0.0;
     char pol = 'p';        // 'p' or 's' polarization
@@ -77,6 +79,7 @@ int main(int argc, char** argv) {
         if (std::strcmp(argv[i], "--field") == 0 && i + 1 < argc) out_prefix = argv[++i];
         else if (std::strcmp(argv[i], "--threads") == 0 && i + 1 < argc) threads = std::atoi(argv[++i]);
         else if (std::strcmp(argv[i], "--quasi1d") == 0) quasi1d = true;
+        else if (std::strcmp(argv[i], "--mem") == 0) report_mem = true;
         else if (std::strcmp(argv[i], "--theta") == 0 && i + 1 < argc) theta_deg = std::atof(argv[++i]);
         else if (std::strcmp(argv[i], "--phi") == 0 && i + 1 < argc) phi_deg = std::atof(argv[++i]);
         else if (std::strcmp(argv[i], "--pol") == 0 && i + 1 < argc) pol = argv[++i][0];
@@ -112,6 +115,7 @@ int main(int argc, char** argv) {
     cfg.theta = theta_deg * M_PI / 180.0;
     cfg.phi   = phi_deg   * M_PI / 180.0;
     cfg.quasi1d = quasi1d;
+    cfg.report_memory = report_mem;
 
     RCWA solver(cfg);
     solver.Add_LayerUniform(1.0, eps_from_n(n_vac));      // incident vacuum
