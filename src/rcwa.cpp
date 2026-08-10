@@ -37,6 +37,20 @@ void run_two_parallel(F1&& f1, F2&& f2) {
         f2();
     }
 }
+
+using Matrix2cd = Eigen::Matrix<complex, 2, 2>;
+
+// Eigen's generic inverse is needlessly expensive for the millions of tiny
+// inversions in the per-harmonic uniform suffix.
+inline Matrix2cd inverse2(const Matrix2cd& a) {
+    Matrix2cd out;
+    const complex det = a(0, 0) * a(1, 1) - a(0, 1) * a(1, 0);
+    out(0, 0) = a(1, 1);
+    out(0, 1) = -a(0, 1);
+    out(1, 0) = -a(1, 0);
+    out(1, 1) = a(0, 0);
+    return out / det;
+}
 } // namespace
 
 RCWA::RCWA(const RCWAConfig& config)
@@ -346,17 +360,20 @@ void RCWA::GridLayer_geteps(const std::vector<std::vector<complex>>& ep_all_anis
 // ── KP / eigensystem ────────────────────────────────────────────────────────
 
 void RCWA::MakeKPMatrix_uniform(complex omega, const ComplexVector& kx, const ComplexVector& ky,
-                                complex eps, ComplexMatrix& kp) {
+                                 complex eps, ComplexMatrix& kp) {
     int nG = kx.size();
-    ComplexMatrix I = ComplexMatrix::Identity(2 * nG, 2 * nG);
-    // Jk = vstack(diag(-ky), diag(kx))  -> (2nG, nG). MUST be zero-initialized:
-    // only the diagonal is set, and the off-diagonal garbage would pollute the
-    // matrix product Jk * Jk.transpose() (reads every column of Jk).
-    ComplexMatrix Jk = ComplexMatrix::Zero(2 * nG, nG);
-    Jk.topRows(nG).diagonal()    = -ky;
-    Jk.bottomRows(nG).diagonal() =  kx;
     complex epinv = complex(1.0, 0.0) / eps;
-    kp = omega * omega * I - epinv * Jk * Jk.transpose();
+    // Jk*Jk^T is block diagonal in Fourier order. Build its four diagonal
+    // blocks directly; the previous rectangular-Jk GEMM was pure overhead.
+    kp = ComplexMatrix::Zero(2 * nG, 2 * nG);
+    kp.topLeftCorner(nG, nG).diagonal().array() =
+        omega * omega - epinv * ky.array() * ky.array();
+    kp.topRightCorner(nG, nG).diagonal().array() =
+        epinv * ky.array() * kx.array();
+    kp.bottomLeftCorner(nG, nG).diagonal().array() =
+        epinv * kx.array() * ky.array();
+    kp.bottomRightCorner(nG, nG).diagonal().array() =
+        omega * omega - epinv * kx.array() * kx.array();
 }
 
 void RCWA::MakeKPMatrix_patterned(complex omega, const ComplexVector& kx, const ComplexVector& ky,
@@ -364,6 +381,24 @@ void RCWA::MakeKPMatrix_patterned(complex omega, const ComplexVector& kx, const 
                                   ComplexMatrix& kp) {
     (void)ep2;  // ep2 unused in kp (matches rcwa.py MakeKPMatrix)
     int nG = kx.size();
+    // For a y-invariant grid, ky is the same scalar for every retained
+    // harmonic. Expand Jk*epinv*Jk^T as blocks and avoid the two rectangular
+    // products used by the general 2D formulation.
+    if (quasi1d_ && nG > 0) {
+        const complex ky0 = ky(0);
+        const ComplexMatrix D = kx.asDiagonal();
+        const ComplexMatrix I = ComplexMatrix::Identity(nG, nG);
+        kp.resize(2 * nG, 2 * nG);
+        kp.topLeftCorner(nG, nG).noalias() =
+            omega * omega * I - ky0 * ky0 * epinv;
+        kp.topRightCorner(nG, nG).noalias() =
+            ky0 * epinv * D;
+        kp.bottomLeftCorner(nG, nG).noalias() =
+            ky0 * D * epinv;
+        kp.bottomRightCorner(nG, nG).noalias() =
+            omega * omega * I - D * epinv * D;
+        return;
+    }
     ComplexMatrix I = ComplexMatrix::Identity(2 * nG, 2 * nG);
     ComplexMatrix Jk = ComplexMatrix::Zero(2 * nG, nG);
     Jk.topRows(nG).diagonal()    = -ky;
@@ -393,14 +428,14 @@ void RCWA::SolveLayerEigensystem_patterned(complex omega, const ComplexVector& k
     (void)omega;  // unused (matches rcwa.py SolveLayerEigensystem)
     int nG = kx.size();
     int n2 = 2 * nG;
-    // k = vstack(diag(kx), diag(ky))  -> (2nG, nG); MUST be zero-initialized.
-    // kkT = k * k^T then has cross terms diag(kx*ky) in the off-diagonal blocks
-    // (same trap as the Jk construction in MakeKPMatrix_*).
-    ComplexMatrix k_mat = ComplexMatrix::Zero(2 * nG, nG);
-    k_mat.topRows(nG).diagonal()    = kx;
-    k_mat.bottomRows(nG).diagonal() = ky;
     auto tt0 = std::chrono::steady_clock::now();
-    ComplexMatrix kkT = k_mat * k_mat.transpose();
+    // kkT has diagonal nG×nG blocks. Construct it directly instead of
+    // materializing k_mat and paying for a rectangular GEMM.
+    ComplexMatrix kkT = ComplexMatrix::Zero(n2, n2);
+    kkT.topLeftCorner(nG, nG).diagonal() = kx.array() * kx.array();
+    kkT.topRightCorner(nG, nG).diagonal() = kx.array() * ky.array();
+    kkT.bottomLeftCorner(nG, nG).diagonal() = ky.array() * kx.array();
+    kkT.bottomRightCorner(nG, nG).diagonal() = ky.array() * ky.array();
     ComplexMatrix M = ep2 * kp - kkT;
     auto tt1 = std::chrono::steady_clock::now();
 
@@ -559,7 +594,7 @@ void RCWA::GetSMatrix(int indi, int indj,
 
     // One Redheffer star-product step: append the interface (l, l+1) to S.
     auto step = [&](int l, ComplexMatrix& s11, ComplexMatrix& s12,
-                    ComplexMatrix& s21, ComplexMatrix& s22) {
+                    ComplexMatrix& s21, ComplexMatrix& s22, bool initial = false) {
         int lp1 = l + 1;
         const bool uniform_pair =
             layer_types_[l] == LayerType::Uniform &&
@@ -578,10 +613,15 @@ void RCWA::GetSMatrix(int indi, int indj,
                                uniform_eps_[material_idx_[lp1]]};
             auto it = uniform_pair_cache_.find(key);
             if (it == uniform_pair_cache_.end()) {
-                ComplexMatrix kp_l_inv = internal::zinverse(kp(l));   // = inv(kp_l·phi_l)
+                ComplexMatrix P = kp(lp1);
+                ComplexMatrix kp_l_lu = kp(l);
+                std::vector<int> piv = internal::zgetrf_factor(
+                    n2, kp_l_lu.data(), static_cast<int>(kp_l_lu.outerStride()));
+                internal::zgetrs_solve(n2, n2, kp_l_lu.data(),
+                                       static_cast<int>(kp_l_lu.outerStride()), piv.data(),
+                                       P.data(), static_cast<int>(P.outerStride()));
                 ComplexVector qinv = q(lp1).cwiseInverse();
-                ComplexMatrix P = q(l).asDiagonal() * kp_l_inv
-                                  * kp(lp1) * qinv.asDiagonal();
+                P = q(l).asDiagonal() * P * qinv.asDiagonal();
                 UniformPairCache c;
                 c.T11 = 0.5 * (ComplexMatrix::Identity(n2, n2) + P);
                 c.T12 = 0.5 * (ComplexMatrix::Identity(n2, n2) - P);
@@ -590,13 +630,50 @@ void RCWA::GetSMatrix(int indi, int indj,
             T11 = it->second.T11;
             T12 = it->second.T12;
         } else {
-            ComplexMatrix Q = internal::zinverse(ph(l)) * ph(lp1);
-            ComplexMatrix kpphi_l_inv = internal::zinverse(kp(l) * ph(l));
+            ComplexMatrix Q = ph(lp1);
+            ComplexMatrix phi_l_lu = ph(l);
+            std::vector<int> q_piv = internal::zgetrf_factor(
+                n2, phi_l_lu.data(), static_cast<int>(phi_l_lu.outerStride()));
+            internal::zgetrs_solve(n2, n2, phi_l_lu.data(),
+                                   static_cast<int>(phi_l_lu.outerStride()), q_piv.data(),
+                                   Q.data(), static_cast<int>(Q.outerStride()));
+
+            ComplexMatrix P = kp(lp1) * ph(lp1);
+            ComplexMatrix kpphi_l_lu = kp(l) * ph(l);
+            std::vector<int> p_piv = internal::zgetrf_factor(
+                n2, kpphi_l_lu.data(), static_cast<int>(kpphi_l_lu.outerStride()));
+            internal::zgetrs_solve(n2, n2, kpphi_l_lu.data(),
+                                   static_cast<int>(kpphi_l_lu.outerStride()), p_piv.data(),
+                                   P.data(), static_cast<int>(P.outerStride()));
             ComplexVector qinv = q(lp1).cwiseInverse();
-            ComplexMatrix P = q(l).asDiagonal() * kpphi_l_inv
-                              * kp(lp1) * ph(lp1) * qinv.asDiagonal();
+            P = q(l).asDiagonal() * P * qinv.asDiagonal();
             T11 = 0.5 * (Q + P);
             T12 = 0.5 * (Q - P);
+        }
+
+        // The first interface starts from S11=S22=I and S12=S21=0. Expanding
+        // the generic update would execute three dense products involving
+        // zero/identity matrices; use the reduced formulas directly.
+        if (initial) {
+            ComplexMatrix T11_lu = T11;
+            std::vector<int> piv = internal::zgetrf_factor(
+                n2, T11_lu.data(), static_cast<int>(T11_lu.outerStride()));
+
+            ComplexMatrix new_S11 = d1.asDiagonal();
+            internal::zgetrs_solve(n2, n2, T11_lu.data(),
+                                   static_cast<int>(T11_lu.outerStride()), piv.data(),
+                                   new_S11.data(), static_cast<int>(new_S11.outerStride()));
+            ComplexMatrix new_S12 = -T12 * d2.asDiagonal();
+            internal::zgetrs_solve(n2, n2, T11_lu.data(),
+                                   static_cast<int>(T11_lu.outerStride()), piv.data(),
+                                   new_S12.data(), static_cast<int>(new_S12.outerStride()));
+            ComplexMatrix new_S21 = T12 * new_S11;
+            ComplexMatrix new_S22 = T11 * d2.asDiagonal() + T12 * new_S12;
+            s11 = std::move(new_S11);
+            s12 = std::move(new_S12);
+            s21 = std::move(new_S21);
+            s22 = std::move(new_S22);
+            return;
         }
 
         // Redheffer star product (S-update, sequential, cannot cache).
@@ -781,7 +858,7 @@ void RCWA::GetSMatrix(int indi, int indj,
             ComplexMatrix L21 = ComplexMatrix::Zero(n2, n2);
             for (int l = indi; l < m; ++l) {
                 auto ts0 = std::chrono::steady_clock::now();
-                step(l, L11, L12, L21, L22);
+                step(l, L11, L12, L21, L22, l == indi);
                 if (std::getenv("CPPRCWA_TIMING")) {
                     using ms = std::chrono::duration<double, std::milli>;
                     std::fprintf(stderr, "[prefix] layer %d->%d: %.1f ms\n", l, l+1,
@@ -824,7 +901,7 @@ void RCWA::GetSMatrix(int indi, int indj,
                 R21 = r21.asDiagonal();
                 R22 = r22.asDiagonal();
             } else {
-                using M2 = Eigen::Matrix<complex, 2, 2>;
+                using M2 = Matrix2cd;
                 std::vector<M2> r11(nG_), r12(nG_), r21(nG_), r22(nG_);
                 const M2 I2 = M2::Identity();
                 const M2 Z2 = M2::Zero();
@@ -847,11 +924,11 @@ void RCWA::GetSMatrix(int indi, int indj,
                         Kb << kpb(h, h),       kpb(h, nG_ + h),
                               kpb(nG_ + h, h),  kpb(nG_ + h, nG_ + h);
                         // P = q_l·kp_l⁻¹·kp_lp1·q_lp1⁻¹ (2×2), q scalar per harmonic.
-                        M2 P = (ql(h) / qb(h)) * Kl.inverse() * Kb;
+                        M2 P = (ql(h) / qb(h)) * inverse2(Kl) * Kb;
                         M2 T11 = 0.5 * (I2 + P);
                         M2 T12 = 0.5 * (I2 - P);
                         M2 P1m = T11 - d1 * r12[h] * T12;
-                        M2 P1m_inv = P1m.inverse();
+                        M2 P1m_inv = inverse2(P1m);
                         M2 ns11 = d1 * r11[h] * P1m_inv;
                         M2 ns12 = (d1 * r12[h] * T11 - T12) * d2 * P1m_inv;
                         M2 ns21 = r21[h] + r22[h] * T12 * ns11;
@@ -859,8 +936,6 @@ void RCWA::GetSMatrix(int indi, int indj,
                         r11[h] = ns11; r12[h] = ns12; r21[h] = ns21; r22[h] = ns22;
                     }
                 }
-                // Scatter the per-harmonic 2×2 blocks into block-diagonal (2nG)²
-                // matrices (ordering [Ex_0..Ex_{nG-1}, Ey_0..Ey_{nG-1}]).
                 auto scatter = [&](const std::vector<M2>& v) {
                     ComplexMatrix out = ComplexMatrix::Zero(n2, n2);
                     for (int h = 0; h < nG_; ++h) {
@@ -881,10 +956,17 @@ void RCWA::GetSMatrix(int indi, int indj,
             // Overlapping cascade: L = S(indi, m), R = S(m, indj) share layer m.
             // M = inv(I - L12·R21); S11=R11·M·L11, S12=R11·M·L12·R22+R12,
             // S21=L21+L22·R21·M·L11, S22=L22·R21·M·L12·R22+L22·R22.
-            ComplexMatrix M = internal::zinverse(
-                ComplexMatrix::Identity(n2, n2) - L12 * R21);
-            ComplexMatrix ML11 = M * L11;
-            ComplexMatrix ML12R22 = M * (L12 * R22);
+            ComplexMatrix F = ComplexMatrix::Identity(n2, n2) - L12 * R21;
+            std::vector<int> piv = internal::zgetrf_factor(
+                n2, F.data(), static_cast<int>(F.outerStride()));
+            ComplexMatrix ML11 = L11;
+            internal::zgetrs_solve(n2, n2, F.data(), static_cast<int>(F.outerStride()),
+                                   piv.data(), ML11.data(),
+                                   static_cast<int>(ML11.outerStride()));
+            ComplexMatrix ML12R22 = L12 * R22;
+            internal::zgetrs_solve(n2, n2, F.data(), static_cast<int>(F.outerStride()),
+                                   piv.data(), ML12R22.data(),
+                                   static_cast<int>(ML12R22.outerStride()));
             S11 = R11 * ML11;
             S12 = R11 * ML12R22 + R12;
             S21 = L21 + L22 * (R21 * ML11);
@@ -923,11 +1005,11 @@ void RCWA::GetSMatrix(int indi, int indj,
         ComplexMatrix L22 = ComplexMatrix::Identity(n2, n2);
         ComplexMatrix L12 = ComplexMatrix::Zero(n2, n2);
         ComplexMatrix L21 = ComplexMatrix::Zero(n2, n2);
-        for (int l = indi; l < m; ++l) step(l, L11, L12, L21, L22);
+        for (int l = indi; l < m; ++l) step(l, L11, L12, L21, L22, l == indi);
         auto tt1 = std::chrono::steady_clock::now();
 
         // ── Suffix R = S(m, indj): per-harmonic 2×2 recursion ──
-        using M2 = Eigen::Matrix<complex, 2, 2>;
+        using M2 = Matrix2cd;
         std::vector<M2> r11(nG_), r12(nG_), r21(nG_), r22(nG_);
         const M2 I2 = M2::Identity();
         const M2 Z2 = M2::Zero();
@@ -950,11 +1032,11 @@ void RCWA::GetSMatrix(int indi, int indj,
                 Kb << kpb(h, h),       kpb(h, nG_ + h),
                       kpb(nG_ + h, h),  kpb(nG_ + h, nG_ + h);
                 // P = q_l·kp_l⁻¹·kp_lp1·q_lp1⁻¹ (2×2), q scalar per harmonic.
-                M2 P = (ql(h) / qb(h)) * Kl.inverse() * Kb;
+                M2 P = (ql(h) / qb(h)) * inverse2(Kl) * Kb;
                 M2 T11 = 0.5 * (I2 + P);
                 M2 T12 = 0.5 * (I2 - P);
                 M2 P1m = T11 - d1 * r12[h] * T12;
-                M2 P1m_inv = P1m.inverse();
+                M2 P1m_inv = inverse2(P1m);
                 M2 ns11 = d1 * r11[h] * P1m_inv;
                 M2 ns12 = (d1 * r12[h] * T11 - T12) * d2 * P1m_inv;
                 M2 ns21 = r21[h] + r22[h] * T12 * ns11;
@@ -981,10 +1063,16 @@ void RCWA::GetSMatrix(int indi, int indj,
         // ── Overlapping cascade: L = S(indi, m), R = S(m, indj) share layer m.
         // M = inv(I − L12·R21); S11=R11·M·L11, S12=R11·M·L12·R22+R12,
         // S21=L21+L22·R21·M·L11, S22=L22·R21·M·L12·R22+L22·R22.
-        ComplexMatrix M = internal::zinverse(
-            ComplexMatrix::Identity(n2, n2) - L12 * R21);
-        ComplexMatrix ML11 = M * L11;
-        ComplexMatrix ML12R22 = M * (L12 * R22);
+        ComplexMatrix F = ComplexMatrix::Identity(n2, n2) - L12 * R21;
+        std::vector<int> piv = internal::zgetrf_factor(
+            n2, F.data(), static_cast<int>(F.outerStride()));
+        ComplexMatrix ML11 = L11;
+        internal::zgetrs_solve(n2, n2, F.data(), static_cast<int>(F.outerStride()),
+                               piv.data(), ML11.data(), static_cast<int>(ML11.outerStride()));
+        ComplexMatrix ML12R22 = L12 * R22;
+        internal::zgetrs_solve(n2, n2, F.data(), static_cast<int>(F.outerStride()),
+                               piv.data(), ML12R22.data(),
+                               static_cast<int>(ML12R22.outerStride()));
         S11 = R11 * ML11;
         S12 = R11 * ML12R22 + R12;
         S21 = L21 + L22 * (R21 * ML11);
@@ -1001,7 +1089,8 @@ void RCWA::GetSMatrix(int indi, int indj,
         S22 = ComplexMatrix::Identity(n2, n2);
         S12 = ComplexMatrix::Zero(n2, n2);
         S21 = ComplexMatrix::Zero(n2, n2);
-        for (int l = indi; l < indj; ++l) step(l, S11, S12, S21, S22);
+        for (int l = indi; l < indj; ++l)
+            step(l, S11, S12, S21, S22, l == indi);
     }
     if (std::getenv("CPPRCWA_TIMING")) {
         using ms = std::chrono::duration<double, std::milli>;

@@ -3,6 +3,7 @@
 #include <cpprcwa/rcwa.h>
 #include <cpprcwa/errors.h>
 #include <cmath>
+#include <cstdlib>
 #include <vector>
 
 using namespace cpprcwa;
@@ -355,4 +356,45 @@ TEST_CASE("RCWA EUV absorber on mirror oblique incidence (theta=6deg)", "[rcwa][
     int i2 = find_order(0, 1);
     REQUIRE(i2 >= 0);
     CHECK(std::abs(refl.ex(i2) - complex(-0.023727395629504811,  0.030379369087523173)) < 1e-9);
+}
+
+TEST_CASE("RCWA quasi1d oblique block-triangular eigensystem", "[rcwa][quasi1d]") {
+    constexpr int Nx = 80, Ny = 4;
+    std::vector<complex> epgrid((size_t)Nx * Ny, complex(1.0, 0.0));
+    for (int i = 30; i < 50; ++i)
+        for (int j = 0; j < Ny; ++j)
+            epgrid[(size_t)i * Ny + j] = complex(0.9562, 0.0323);
+
+    auto solve = [&]() {
+        RCWAConfig cfg;
+        cfg.nG = 61;
+        cfg.L1 = Eigen::Vector2d(3500.0, 0.0);
+        cfg.L2 = Eigen::Vector2d(0.0, 67.5);
+        cfg.freq = complex(1.0 / 13.5, 0.0);
+        cfg.theta = M_PI / 30.0;
+        cfg.phi = M_PI / 4.0;
+        cfg.quasi1d = true;
+        RCWA solver(cfg);
+        solver.Add_LayerUniform(1.0, complex(1.0, 0.0));
+        solver.Add_LayerGrid(60.0, Nx, Ny);
+        solver.Add_LayerUniform(2.5, complex(0.9114, 0.0171));
+        solver.Add_LayerUniform(2.8, complex(0.9226, 0.0064));
+        solver.Add_LayerUniform(4.2, complex(0.9997, 0.0018));
+        solver.Add_LayerUniform(1.0, complex(0.9997, 0.0018));
+        solver.Init_Setup();
+        solver.GridLayer_geteps(epgrid);
+        PlaneWaveExcitation exc;
+        exc.p_amp = 1.0;
+        solver.MakeExcitationPlanewave(exc);
+        return solver.RT_Solve(true);
+    };
+
+    unsetenv("CPPRCWA_NO_BLOCKTRI");
+    const RTResult reduced = solve();
+    setenv("CPPRCWA_NO_BLOCKTRI", "1", 1);
+    const RTResult full = solve();
+    unsetenv("CPPRCWA_NO_BLOCKTRI");
+
+    CHECK(reduced.R == Approx(full.R).epsilon(1e-11));
+    CHECK(reduced.T == Approx(full.T).epsilon(1e-11));
 }
