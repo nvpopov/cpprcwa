@@ -1,36 +1,45 @@
-\documentclass{article}
+\documentclass[11pt]{article}
 
-\usepackage[utf8]{inputenc}
 \usepackage[english]{babel}
 \usepackage[
 a4paper,
-total={170mm,257mm},
-left=20mm,
-top=20mm,
+textwidth=162mm,
+textheight=238mm,
+centering,
 ]{geometry}
-\usepackage{lineno}
-\usepackage{setspace}
 \usepackage{authblk}
-\usepackage{tensor}
 \usepackage{booktabs}
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{amsthm}
-\usepackage{empheq}
-\usepackage{url}
+\usepackage{mathtools}
+\usepackage{newtxtext,newtxmath}
+\usepackage{microtype}
+\usepackage{siunitx}
+\usepackage{xcolor}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,calc,decorations.pathreplacing,patterns,positioning,shapes.geometric}
 \usepackage{csquotes}
+\usepackage[hidelinks]{hyperref}
+\usepackage[nameinlink,noabbrev]{cleveref}
+\hypersetup{pdftitle={Exact block reductions in Fourier-modal scattering theory},
+  pdfauthor={N. V. Popov}}
+\emergencystretch=2em
+\allowdisplaybreaks
 
-\newtheorem{lemma}{Lemma}
-\newtheorem{corollary}{Corollary}
+\newtheorem{theorem}{Theorem}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
 
 \usepackage[
 backend=biber,
-style=alphabetic,
-sorting=ynt
+style=numeric-comp,
+sorting=none,
+giveninits=true,
+maxbibnames=6
 ]{biblatex}
-
-% \linenumbers
-\onehalfspacing
 
 \addbibresource{sample.bib}
 
@@ -47,69 +56,67 @@ sorting=ynt
 \newcommand{\fa}{\mathbf{a}}
 \newcommand{\fb}{\mathbf{b}}
 \newcommand{\Id}{\mathbf{I}}
-\newcommand{\diag}{\mathrm{diag}}
-\newcommand{\blkdiag}{\mathrm{blkdiag}}
-\newcommand{\tr}{\mathrm{tr}}
-\newcommand{\Rre}{\mathrm{Re}}
+\DeclareMathOperator{\diag}{diag}
+\DeclareMathOperator{\blkdiag}{blkdiag}
+\DeclareMathOperator{\tr}{tr}
+\DeclareMathOperator{\rank}{rank}
+\DeclareMathOperator{\Rre}{Re}
 \newcommand{\R}{\mathbb{R}}
+\newcommand{\ii}{\mathrm{i}}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\order}{\mathcal{O}}
 
-\title{Structure-aware Fourier modal analysis: per-harmonic reductions and\\ exact eigenproblem decompositions for fast rigorous coupled-wave analysis}
+\title{Exact block reductions in Fourier-modal scattering theory for layered periodic media}
 
 \author[1]{N. V. Popov}
-\affil[1]{Department of Physics}
+\affil[1]{Department of Physics, affiliation to be specified}
 
-\date{\today}
+\date{}
 
 \begin{document}
 \maketitle
 
 \begin{abstract}
-Rigorous coupled-wave analysis (RCWA)~\cite{moharam1981rcwa,moharam1995formulation},
-also known as the Fourier modal method, expands the fields of a layered
-periodic structure in a truncated set of $n$ Fourier harmonics and assembles a
-scattering ($S$) matrix from a $2n\times2n$ non-Hermitian eigenproblem and from
-dense Redheffer (star) products over the layer stack~\cite{redheffer1962transmission,li1996recursive}.
-The generic implementation therefore costs $O(n^3)$ per layer interface and
-$O(n^3)$ for the eigensolve, which becomes prohibitive for the many-harmonic
-problems of modern applications (metasurfaces, EUV lithography masks,
-multilayer mirrors), where $n$ can reach hundreds to thousands.
-
-We show that most of this cubic cost is avoidable by exploiting algebraic
-structure that is already present in the governing equations. (i)~\emph{Uniform
-layers}: a homogeneous layer never couples different diffraction orders; under a
-per-harmonic $(E_{x,h},E_{y,h})$ interleaving, its operator is block-diagonal
-with $2\times2$ blocks for \emph{arbitrary} truncation sets and \emph{arbitrary}
-oblique incidence. The $S$-matrix of any all-uniform multilayer stack
-(incident medium, caps, multilayer mirrors, substrates) is therefore built by
-independent per-harmonic $2\times2$ recursions in $O(n\,N_{\mathrm{layers}})$,
-eliminating the cubic cost of the stack. (ii)~\emph{Patterned layer}: the
-$2n\times2n$ eigenproblem decouples exactly into two $n\times n$ problems ---
-block-diagonal at normal incidence for mirror-symmetric patterns, and
-block-lower-triangular at oblique incidence for $y$-invariant patterns, the
-latter with an exact rank-structured reconstruction of the coupled
-eigenvectors. (iii)~\emph{Binary gratings}: the permittivity convolution matrix
-is diagonal-plus-low-rank (a discrete prolate spheroidal concentration), which
-bounds the active eigen-subspace and enables reduced-rank eigensolves.
-(iv)~\emph{Post-processing}: the volume integral is evaluated block-wise
-without materializing $4n\times4n$ matrices.
-
-The resulting solver reproduces the reference implementations grcwa and
-S4~\cite{liu2014s4} to machine precision and reduces the wall-clock time of a
-full-2D EUV absorber stack on a 40$\times$(Mo/Si) mirror by $3.5\times$ (the
-multilayer suffix alone dropping from hours-scale dense products to
-microseconds), and by up to $30\times$ end-to-end for quasi-1D geometries.
+The Fourier modal method represents Maxwell's equations in a periodic layer by
+a finite set of $n$ reciprocal-lattice harmonics.  In a generic formulation,
+the modal problem has dimension $2n$ and the stable composition of layers by a
+Redheffer product requires dense cubic algebra.  We derive exact reductions of
+these operators for structures occurring frequently in diffraction theory.
+For an isotropic homogeneous layer, a permutation to the per-harmonic basis
+$(E_{x,h},E_{y,h})$ decomposes the Maxwell operator into independent
+$2\times2$ blocks at arbitrary incidence.  Consequently, an arbitrary
+homogeneous multilayer is propagated in $\order(nN_{\mathrm{u}})$ operations,
+where $N_{\mathrm{u}}$ is the number of homogeneous interfaces.  For a
+$y$-invariant patterned layer, the modal matrix is block diagonal at normal
+incidence and block lower triangular under conical illumination.  Its spectrum
+is therefore obtained from two $n\times n$ non-Hermitian eigenproblems; in the
+conical case we give an explicit reconstruction of the coupled eigenvectors.
+We also derive a block contraction for quadratic volume observables that avoids
+the $4n\times4n$ intermediate matrices of the direct expression.  Numerical
+experiments against grcwa and S4 verify the scattering observables and Fourier
+fields to the accuracy of the reference discretization.  For an extreme-
+ultraviolet absorber on a 40-period Mo/Si mirror, the homogeneous-stack
+reduction accelerates the scattering stage by approximately $3.4$--$3.7$,
+while the combined one-dimensional reductions give an order-of-magnitude or
+greater acceleration for line gratings.  The analysis separates exact
+operator reductions from approximation-dependent convergence acceleration and
+identifies the patterned-layer eigensystem as the remaining asymptotic
+bottleneck.
 \end{abstract}
+
+\noindent\textbf{Keywords:} Fourier modal method; rigorous coupled-wave
+analysis; diffraction gratings; scattering matrix; conical incidence;
+block-triangular eigenproblem.
 
 \section{Introduction}
 \label{sec:intro}
-
-\subsection{Motivation}
 
 Rigorous coupled-wave analysis (RCWA), also called the Fourier modal method
 (FMM), is the workhorse for computing the optical response of layered,
 laterally periodic photonic structures: diffraction gratings, photonic
 crystals, thin-film solar cells, metasurfaces, and the phase-shifting absorber
-stacks of extreme-ultraviolet (EUV) lithography \cite{moharam1981rcwa,moharam1995formulation,liu2014s4}.
+stacks of extreme-ultraviolet (EUV) lithography
+\cite{moharam1981rcwa,moharam1995formulation,liu2014s4}.
 The method expands the electromagnetic field in a truncated set of $n$
 planewave (Fourier) harmonics in the plane of periodicity, reduces Maxwell's
 equations in each laterally structured layer to a $2n\times2n$ non-Hermitian
@@ -119,20 +126,17 @@ Reflectivity, transmissivity, per-order diffraction efficiencies, near-field
 intensities, and absorbed-power distributions all follow from the assembled
 $S$-matrix and the per-layer modal data.
 
-Two application trends drive the need for speed. First, the number of retained
-harmonics $n$ must grow to resolve fine features: an EUV mask absorber
-($60\,\mathrm{nm}$ feature in a $300\,\mathrm{nm}$ cell) requires $n\sim10^2$;
-a line grating of period $3.5\,\mu$m supports $\pm259$ propagating orders
-alone, and its quasi-2D simulation (with a handful of coupled $y$-orders) needs
-$n\sim10^3$--$10^4$. Second, optimization and sensitivity studies --- mask
-co-optimization, tolerance analysis, inverse design \cite{grcwa} --- evaluate
-the forward solver at hundreds to thousands of parameter points, so a
-$10$--$100\times$ speedup per solve is directly multiplied into the total
-study time.
+The numerical difficulty is controlled by the number $n$ of retained spatial
+harmonics.  A patterned layer requires a non-Hermitian eigenproblem of order
+$2n$, while stable composition across interfaces requires dense matrix products
+and linear solves of the same order.  Both stages scale cubically and store
+$\order(n^2)$ complex numbers.  Large-period gratings make this cost especially
+severe: at wavelength $\lambda$, a period $L_x$ admits on the order of
+$2L_x/\lambda$ propagating diffraction channels before evanescent harmonics are
+included.  Repeated evaluations in wavelength, angle, or geometric parameter
+studies compound the cost.
 
-\subsection{The cubic cost and why it hurts}
-
-A generic implementation spends its time in two places, both cubic in $n$:
+A generic implementation spends its time in two algebraic operations:
 
 \begin{enumerate}
 \item $O\big((2n)^3\big)$ for the (generally non-Hermitian, complex)
@@ -141,20 +145,16 @@ A generic implementation spends its time in two places, both cubic in $n$:
   interface} in the Redheffer recursion \eqref{eq:star}.
 \end{enumerate}
 
-To fix scales, consider a routine EUV-mask stack: vacuum$\,|\,$TaN
-absorber$\,|\,$Ru cap$\,|\,$40$\times$(Mo/Si) mirror$\,|\,$Si substrate, i.e.\ one
-patterned layer and $\approx80$ homogeneous interfaces. With a quasi-2D
-truncation of $n\approx3500$ harmonics ($N=2n\approx7000$), one dense complex
-$N\times N$ product costs $\approx N^3\approx3.4\times10^{11}$ complex
-operations. Each interface contributes on the order of ten such products plus
-an $LU$ solve, and the 80 interfaces of the mirror dominate the budget at
-$\gtrsim10^{14}$--$10^{15}$ operations --- on the order of hours even on a
-multicore workstation. The patterned-layer eigenproblem contributes a further
-$\sim25 N^3$ operations. Any reduction that removes the \emph{number} of
-interfaces, or the \emph{dimension} against which the stack is processed, is
-thus worth far more than a constant-factor tuning of a single dense product.
+As a representative geometry, consider
+vacuum$\,|\,$absorber$\,|\,$cap$\,|\,40\times$(Mo/Si)$\,|\,$substrate.  The
+single patterned layer is followed by approximately 80 homogeneous interfaces.
+Treating those interfaces as generic dense scatterers repeats cubic work even
+though translational invariance forbids coupling between distinct in-plane
+wavevectors in every homogeneous layer.  The purpose of this paper is to expose
+that invariance, and related invariant subspaces of the patterned operator,
+directly in the finite-dimensional Maxwell system.
 
-\subsection{Related work}
+\subsection{Context and main results}
 
 The Fourier-modal method was introduced for diffraction gratings by Moharam and
 Gaylord \cite{moharam1981rcwa} and refined into a stable, efficient formulation
@@ -171,85 +171,33 @@ high-contrast metallic gratings. The scattering-matrix treatment of patterned
 multilayer photonic structures was systematized by Whittaker and Culshaw
 \cite{whittaker1999scattering}.
 
-The performance of FMM solvers has been improved along several axes: better
-truncation and basis selection, factorization rules that reduce the required
-$n$ at fixed accuracy \cite{li1996fourier,li1997formulation}, and --- in the
-present context --- the exploitation of \emph{structure within the algebraic
-operators}. Two structural facts are classical for one-dimensional gratings:
-the $S$-matrix of a stack of homogeneous layers decouples into independent
-scalar (or $2\times2$) per-order problems \cite{whittaker1999scattering}, and at
-normal incidence the tangential TE/TM polarizations decouple. The present paper
-makes three contributions beyond these classical facts: it (i)~proves and
-exploits the per-harmonic decoupling for \emph{arbitrary} two-dimensional
-harmonic sets and \emph{oblique} incidence (Section~\ref{sec:uniform}); (ii)~derives
-\emph{exact} decompositions of the patterned-layer eigenproblem ---
-block-diagonal at normal incidence, and block-lower-triangular at oblique
-incidence for $y$-invariant gratings, with an explicit reconstruction of the
-coupled eigenvectors (Section~\ref{sec:eig}); and (iii)~identifies a low-rank
-(diagonal-plus-low-rank) structure in the permittivity convolution matrix of
-binary gratings, inherited from the eigenvalue concentration of the discrete
-prolate spheroidal matrix \cite{slepian1978discrete}
-(Section~\ref{sec:binary}). We also give a block-wise evaluation of the volume
-integral (Section~\ref{sec:post}) and a validated, heavily optimized
-implementation (Sections~\ref{sec:impl}--\ref{sec:results}).
+Convergence acceleration by Fourier factorization and normal-vector fields
+reduces the harmonic order needed at a specified accuracy
+\cite{li1996fourier,li1997formulation}.  The present work addresses a different
+question: given a fixed Fourier discretization, which parts of its algebra are
+exactly reducible?  The principal results are:
 
-Finally, we note the role of reference implementations. The open-source RCWA
-codes grcwa \cite{grcwa} (a differentiable Python implementation) and
-S4 \cite{liu2014s4} serve as our golden references: every optimization in this
-paper is verified to reproduce their scattering observables to machine
-precision, so the reductions provably do not alter the physics.
-
-\subsection{Contributions}
-
-Summarized, the contributions of this paper are:
 \begin{enumerate}
-\item \emph{Per-harmonic uniform-suffix factorization.} We prove
-  (Lemma~\ref{lem:uniform}) that a homogeneous layer's operator is
-  $2\times2$-block-diagonal per harmonic under an interleaving of the field
-  components, for arbitrary truncation sets and arbitrary oblique incidence,
-  and (Corollary~\ref{cor:suffix}) that the $S$-matrix of any all-homogeneous
-  stack is therefore $2\times2$-block-diagonal. The suffix is assembled by
-  independent per-harmonic $2\times2$ Redheffer recursions in
-  $O(n\,N_{\mathrm{layers}})$, reducing the multilayer mirror from hours-scale
-  to microseconds.
-\item \emph{Exact eigenproblem decompositions.} For the patterned layer we
-  prove the block-diagonal (normal incidence, mirror-symmetric patterns) and
-  block-lower-triangular (oblique incidence, $y$-invariant gratings) forms of
-  $\mathbf{M}$, each splitting the $2n\times2n$ problem into two $n\times n$
-  ones at $4\times$ fewer eigensolver flops, and give the exact
-  reconstruction \eqref{eq:phiblt} of the coupled eigenvectors.
-\item \emph{TE/TM-decoupled scattering path} (Section~\ref{sec:te}): a further
-  $4\times$ reduction on the patterned prefix and assembly at normal
-  incidence.
-\item \emph{Low-rank structure of binary gratings} (Section~\ref{sec:binary}):
-  closed-form Fourier coefficients and the diagonal-plus-low-rank form of both
-  patterned eigenproblems, enabling reduced-rank eigensolves.
-\item \emph{Block-wise post-processing} (Section~\ref{sec:post}): the
-  absorption and stress-tensor integrals without $4n\times4n$ /
-  $3n\times3n$ matrices.
-\item \emph{A validated high-performance implementation}
-  (Sections~\ref{sec:impl}--\ref{sec:results}), bit-identical to the reference
-  solvers and $3.5\times$--$30\times$ faster on representative stacks.
+\item A homogeneous isotropic layer is a direct sum of $n$ two-dimensional
+  polarization spaces, for any reciprocal-lattice truncation and any Bloch
+  wavevector.  A homogeneous stack therefore admits an exact per-harmonic
+  scattering recursion.
+\item For a $y$-invariant isotropic profile, the patterned modal matrix splits
+  into two $n$-dimensional spectral problems.  At normal incidence the matrix
+  is block diagonal; at conical incidence it is block lower triangular, and
+  the off-diagonal eigenvector block is obtained from a Sylvester equation.
+\item Quadratic volume observables can be contracted using $2n$-dimensional
+  blocks, without constructing the direct $4n$-dimensional expression.
 \end{enumerate}
 
-All reductions are \emph{exact}: they change only the order of arithmetic, not
-the discretized model. This is in contrast to convergence-accelerating
-techniques \cite{li1996fourier,li1997formulation}, which reduce the required
-$n$; the two families are orthogonal and compound.
+These are identities of the discretized Maxwell operator.  They introduce no
+material, weak-coupling, or paraxial approximation and are complementary to
+factorization rules that improve convergence with $n$.
 
-\subsection{Organization}
-
-The remainder of the paper is organized as follows.
-Section~\ref{sec:formulation} derives the Fourier-modal formulation from
-Maxwell's equations and fixes notation. Section~\ref{sec:uniform} proves the
-per-harmonic structure of homogeneous layers and develops the suffix
-algorithm. Section~\ref{sec:eig} derives the exact eigenproblem decompositions
-of the patterned layer, with complete proofs. Section~\ref{sec:te} treats the
-TE/TM-decoupled path, Section~\ref{sec:binary} the low-rank structure of binary
-gratings, and Section~\ref{sec:post} the block-wise post-processing.
-Section~\ref{sec:impl} collects algorithmic implementation details,
-Section~\ref{sec:results} validates and benchmarks, and
-Section~\ref{sec:disc} discusses limits and outlook.
+The open-source solvers grcwa \cite{grcwa} and S4 \cite{liu2014s4} are used as
+independent numerical references.  The derivation is developed in
+\cref{sec:formulation,sec:uniform,sec:eig}; implementation and numerical tests
+are reported in \cref{sec:impl,sec:results}.
 
 \section{Fourier-modal formulation}
 \label{sec:formulation}
@@ -274,6 +222,63 @@ $\kk_x,\kk_y\in\CC^n$ for the diagonal entries $k_{x,i},k_{y,i}$, and let
 $\fq\in\CC^{2n}$ denote the (unknown) vertical propagation constants. The total
 block size is $N=2n$; all scattering matrices are $N\times N$.
 
+Figure~\ref{fig:geometry} fixes the geometry and the amplitude convention used
+throughout the paper.  Within layer $\ell$, $\fa_\ell$ denotes modes whose
+phase advances in the positive $z$ direction and $\fb_\ell$ denotes modes
+whose phase advances in the negative $z$ direction.  For evanescent waves the
+branch convention introduced below turns these into decaying solutions in the
+corresponding half space.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[x=1cm,y=0.75cm,>=Latex,font=\small]
+  \fill[blue!8] (-4,2.6) rectangle (4,3.8);
+  \fill[orange!18] (-4,1.0) rectangle (4,2.6);
+  \fill[gray!14] (-4,-0.1) rectangle (4,1.0);
+  \fill[green!10] (-4,-1.2) rectangle (4,-0.1);
+  \draw[thick] (-4,2.6)--(4,2.6);
+  \draw[thick] (-4,1.0)--(4,1.0);
+  \draw[thick] (-4,-0.1)--(4,-0.1);
+  \node[right] at (2.6,3.2) {incident medium};
+  \node[right] at (2.6,1.8) {patterned layer $\eps(x,y)$};
+  \node[right] at (2.6,0.45) {homogeneous cap};
+  \node[right] at (2.6,-0.65) {homogeneous suffix};
+  \draw[->,very thick] (-2.9,3.55)--(-2.2,2.75)
+    node[midway,left] {$\mathbf{k}^{\rm inc}$};
+  \draw[->,thick,red!70!black] (-1.7,2.45)--(-1.7,1.45)
+    node[midway,right] {$\fa_\ell$};
+  \draw[->,thick,red!70!black] (-0.8,1.3)--(-0.8,2.3)
+    node[midway,right] {$\fb_\ell$};
+  \draw[->] (-3.5,-0.7)--(-3.5,0.7) node[above] {$z$};
+  \draw[->] (-3.5,-0.7)--(-2.2,-0.7) node[right] {$x$};
+  \draw[decorate,decoration={brace,amplitude=5pt},thick]
+    (4.15,1.0)--(4.15,2.6) node[midway,right=5pt] {$t_\ell$};
+  \foreach \x in {-3.8,-3.4,...,2.2}
+    \draw[orange!60!black,line width=0.35pt] (\x,1.0)--($ (\x,1.0)+(0.7,1.6) $);
+\end{tikzpicture}
+\caption{Layered periodic medium and modal-amplitude convention.  Only the
+patterned layers couple distinct reciprocal-lattice harmonics.  Every
+homogeneous region retains polarization coupling within a fixed harmonic but
+does not couple different harmonics.}
+\label{fig:geometry}
+\end{figure}
+
+For clarity, two orderings of the $2n$ transverse components will be used.  The
+\emph{component-major} ordering is
+\begin{equation}
+\mathbf{u}_{\mathrm{c}}=
+[u_{x,1},\ldots,u_{x,n},u_{y,1},\ldots,u_{y,n}]^{\top},
+\end{equation}
+whereas the \emph{harmonic-major} ordering is
+\begin{equation}
+\mathbf{u}_{\mathrm{h}}=
+[u_{x,1},u_{y,1},u_{x,2},u_{y,2},\ldots,u_{x,n},u_{y,n}]^{\top}.
+\end{equation}
+They are related by a permutation matrix $\Pi$, with
+$\mathbf{u}_{\mathrm{h}}=\Pi\mathbf{u}_{\mathrm{c}}$ and
+$\Pi^{-1}=\Pi^{\top}$.  No approximation is associated with this change of
+basis; it merely makes different sparsity patterns visible.
+
 \subsection{The layer eigenproblem}
 
 We derive the eigenproblem from Maxwell's equations. With the $e^{+i\omega t}$
@@ -283,6 +288,29 @@ time convention, the curl equations in a source-free, non-magnetic medium are
 \nabla\times\mathbf{H}=i\omega\eps\mathbf{E}.
 \label{eq:maxwell}
 \end{equation}
+For a Bloch wave with in-plane Bloch vector $\mathbf{k}_\parallel^{(0)}$, a
+field component $f$ has the truncated expansion
+\begin{equation}
+f(x,y,z)=\sum_{j=1}^{n} f_j(z)
+\exp\!\left[\ii\big(\mathbf{k}_\parallel^{(0)}+
+2\pi\mathbf{G}_j\big)\cdot\mathbf{r}_\parallel\right].
+\label{eq:bloch-expansion}
+\end{equation}
+Orthogonality of these plane waves turns $\partial_x$ and $\partial_y$ into
+multiplication by $\ii K_x$ and $\ii K_y$.  Multiplication by a periodic
+permittivity is not diagonal: if
+$\eps(\mathbf{r}_\parallel)=\sum_{\mathbf{g}}\hat\eps_{\mathbf{g}}
+e^{2\pi\ii\mathbf{g}\cdot\mathbf{r}_\parallel}$, then
+\begin{equation}
+(\eps f)_i=\sum_{j=1}^{n}
+\hat\eps_{\mathbf{G}_i-\mathbf{G}_j}f_j,
+\qquad
+\Cmat_{ij}=\hat\eps_{\mathbf{G}_i-\mathbf{G}_j}.
+\label{eq:convolution}
+\end{equation}
+This convolution is the sole source of coupling between distinct harmonics in
+a layer.
+
 Fourier-expanding the transverse field components
 $e_x,e_y,h_x,h_y\in\CC^n$ and stacking
 $\mathbf{e}_t=[e_x;e_y]$, $\mathbf{h}_t=[h_x;h_y]$ (in the ordering
@@ -296,7 +324,14 @@ e_z=-\tfrac{1}{\omega}\,\Cmat^{-1}(K_y h_x-K_x h_y),\qquad
 h_z=\tfrac{1}{\omega}(K_y e_x-K_x e_y),
 \label{eq:longitudinal}
 \end{equation}
-and rearranging the transverse components yields the first-order system
+To see the first relation explicitly, take the $z$ component of
+$\nabla\times\mathbf{H}=\ii\omega\eps\mathbf{E}$:
+\begin{equation}
+\ii K_xh_y-\ii K_yh_x=\ii\omega\Cmat e_z,
+\end{equation}
+and solve for $e_z$; the $z$ component of the other curl equation gives $h_z$.
+Substitution of these two longitudinal fields into the four remaining curl
+components yields the first-order system
 \begin{equation}
 \frac{d}{dz}
 \begin{bmatrix}e_x\\ e_y\\ h_x\\ h_y\end{bmatrix}
@@ -358,9 +393,9 @@ complex) angular frequency; the lossy case $\mathrm{Im}\,\omega\neq0$ or
 complex $\eps$ is included throughout. For a homogeneous layer of permittivity
 $\eps_0$, $\epinv=1/\eps_0$ and the same formulas apply with $\Cmat$ replaced
 by the scalar $\eps_0$. (The placement of $\epinv$ in \eqref{eq:kp}
-implements the inverse-rule / Lippmann--Schwinger factorization of the
-discontinuous TM component \cite{li1996fourier}, which is essential for
-convergence with metallic gratings.)
+is consistent with the inverse-factorization treatment of the discontinuous
+normal field component \cite{li1996fourier}; alternative Fourier-factorization
+rules may be substituted without changing the block arguments below.)
 
 \subsection{S-matrix (Redheffer) recursion}
 
@@ -388,10 +423,65 @@ update of the accumulated $S$-matrix is
 Each update costs a handful of dense $N\times N$ matrix products plus one
 $LU$-based solve.
 
+The reason for using a scattering matrix rather than a transfer matrix is
+stability.  A transfer matrix carries both exponentially growing and decaying
+solutions through a thick layer.  Even when the physical answer is bounded,
+the intermediate transfer matrix can overflow or lose all significant digits.
+The scattering matrix instead relates incoming amplitudes to outgoing
+amplitudes and keeps the two directions separated.  In the convention used in
+\eqref{eq:star},
+\begin{equation}
+\begin{bmatrix}\fa_{\ell+1}\\ \fb_{\ell}\end{bmatrix}
+=\begin{bmatrix}S_{11}&S_{12}\\S_{21}&S_{22}\end{bmatrix}_{\!\ell}
+\begin{bmatrix}\fa_{\ell}\\ \fb_{\ell+1}\end{bmatrix}.
+\label{eq:scattering-convention}
+\end{equation}
+To derive the update, introduce the internal amplitudes $\fa_m,\fb_m$ at the
+shared interface of two subnetworks $L$ and $R$:
+\begin{align}
+\fa_m&=L_{11}\fa_0+L_{12}\fb_m,\\
+\fb_m&=R_{21}\fa_m+R_{22}\fb_N.
+\end{align}
+Elimination gives
+\begin{equation}
+\bigl(I-L_{12}R_{21}\bigr)\fa_m
+=L_{11}\fa_0+L_{12}R_{22}\fb_N.
+\label{eq:internal-elimination}
+\end{equation}
+Equation~\eqref{eq:cascade} is obtained by solving
+\eqref{eq:internal-elimination} and substituting the result into the outgoing
+relations.  Thus the Redheffer product is not a heuristic matrix operation: it
+is Gaussian elimination of the amplitudes at an internal interface.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[x=1cm,y=0.8cm,>=Latex,font=\small]
+  \draw[rounded corners,fill=blue!10,thick] (-4,0) rectangle (-1.2,1.8);
+  \draw[rounded corners,fill=orange!14,thick] (1.2,0) rectangle (4,1.8);
+  \node at (-2.6,1.4) {$L$};
+  \node at (2.6,1.4) {$R$};
+  \node at (-2.6,0.45) {prefix};
+  \node at (2.6,0.45) {suffix};
+  \draw[->,thick] (-5.2,1.3)--(-4,1.3) node[midway,above] {$\fa_0$};
+  \draw[->,thick] (4,1.3)--(5.2,1.3) node[midway,above] {$\fa_N$};
+  \draw[->,thick] (-1.2,0.5)--(1.2,0.5)
+    node[midway,below] {$\fa_m$};
+  \draw[->,thick] (1.2,1.0)--(-1.2,1.0)
+    node[midway,above] {$\fb_m$};
+  \draw[->,thick] (5.2,0.3)--(4,0.3) node[midway,below] {$\fb_N$};
+  \draw[dashed] (0,-0.25)--(0,2.05);
+  \node[below] at (0,-0.4) {shared modal boundary};
+\end{tikzpicture}
+\caption{Redheffer composition as elimination of the two amplitudes at the
+shared internal boundary.  The same diagram applies when the right subnetwork
+is represented compactly by independent $2\times2$ blocks.}
+\label{fig:cascade}
+\end{figure}
+
 \section{Structure of homogeneous layers}
 \label{sec:uniform}
 
-\subsection{A per-harmonic $2\times2$ block lemma}
+\subsection{A per-harmonic block lemma}
 
 \begin{lemma}\label{lem:uniform}
 Let the $2n$ field components be ordered by harmonic as
@@ -410,7 +500,8 @@ $q_h^2=\eps_0\omega^2-k_{x,h}^2-k_{y,h}^2$, and $\Ph=\Id_{2n}$.
 \end{lemma}
 
 \begin{proof}
-The proof is a direct computation. From \eqref{eq:kp} with
+We first work in the component-major ordering, where the proof is a direct
+computation. From \eqref{eq:kp} with
 $\epinv=1/\eps_0$ and $\Jk=[-\diag(\kk_y);\ \diag(\kk_x)]$, the product
 \begin{equation}
 \Jk\Jk^{\top}
@@ -438,6 +529,21 @@ k_{x,h}^2-k_{y,h}^2$. The corresponding eigenvectors are the coordinate
 vectors, so in the interleaved ordering $\Ph=\Id_{2n}$ and the propagation
 constants $\fq=[\fq_x;\fq_y]$ satisfy $\fq_x=\fq_y=q_h$ componentwise.
 \end{proof}
+
+The permutation argument is central to the reduction.  In the component-major
+basis the four $n\times n$ blocks are diagonal, but the two entries belonging
+to one diffraction order are separated in memory.  Let $\Pi$ denote the
+permutation from component-major to harmonic-major ordering.  Then
+\begin{equation}
+\Pi\kp\Pi^{\top}
+=\blkdiag\bigl(\kp^{(1)},\ldots,\kp^{(n)}\bigr).
+\label{eq:permuted-uniform}
+\end{equation}
+Equation~\eqref{eq:permuted-uniform} is an identity, not an approximation.  It
+shows directly why a homogeneous layer can be applied or inverted by $n$
+independent $2\times2$ operations.  A dense implementation hides this fact by
+using the component-major ordering and consequently performs arithmetic on
+known zero entries.
 
 The lemma is exact for \emph{any} harmonic set --- rectangular, circular, or
 anisotropic $(n_x,n_y)$ --- and for \emph{any} incidence, including oblique
@@ -594,13 +700,31 @@ $\kk_y=\kappa_y\mathbf{1}$ is a constant vector, but we emphasize that the
 block-diagonal case also covers certain 2D patterns (see
 Section~\ref{sec:disc}).
 
-\subsection{Block-diagonal $\mathbf{M}$: normal incidence}
+The following distinction is useful.  The homogeneous-layer reduction follows
+from the absence of lateral material modulation and is valid for every harmonic
+set.  The patterned-layer reduction instead requires a special relation between
+the material convolution operator and the transverse wavevector.  In a
+$y$-invariant grating, the retained harmonics have the form
+$\mathbf{G}_h=(m_h,0)$, so
+\begin{equation}
+K_y=\kappa_y I_n,
+\qquad
+K_x=D_x=\diag(k_{x,1},\ldots,k_{x,n}).
+\label{eq:one-dimensional-kinematics}
+\end{equation}
+The scalar $\kappa_y$ need not vanish: it is nonzero for conical or oblique
+illumination.  This is precisely why the oblique case is not TE/TM separated,
+but still has a triangular spectral structure.
+
+\subsection{Block-diagonal modal operator at normal incidence}
 \label{sec:bd}
 
-At normal incidence $k_{x0}=k_{y0}=0$ and for a $y$-invariant profile
-$\kk_y=\mathbf{0}$, the block $\Jk=[-\diag(\kk_y);\diag(\kk_x)]$ reduces to
-$\Jk=\begin{bmatrix}\mathbf{0}\\ \diag(\kk_x)\end{bmatrix}$, and \eqref{eq:kp}
-gives, writing $D_x=\diag(\kk_x)$,
+At normal incidence, $k_{x0}=k_{y0}=0$.  For a $y$-invariant profile one also
+has $\kk_y=\mathbf{0}$.  Thus the block in \eqref{eq:kp} reduces to
+\begin{equation*}
+\Jk=\begin{bmatrix}\mathbf{0}\\ \diag(\kk_x)\end{bmatrix}.
+\end{equation*}
+Writing $D_x=\diag(\kk_x)$ gives
 \begin{equation}
 \Jk\,\epinv=
 \begin{bmatrix}\mathbf{0}\\ D_x\,\epinv\end{bmatrix},\qquad
@@ -636,7 +760,7 @@ $\Ph=\blkdiag(\Ph_1,\Ph_2)$, reducing the eigensolver flops by a factor four.
 (For a D4-symmetric 2D pattern at normal incidence the off-diagonal blocks also
 vanish exactly, and the same decomposition applies.)
 
-\subsection{Block-lower-triangular $\mathbf{M}$: oblique incidence}
+\subsection{Block-lower-triangular modal operator at oblique incidence}
 \label{sec:blt}
 
 At oblique incidence $k_{y0}\neq0$ the 1D harmonic set still has
@@ -699,6 +823,44 @@ reconstruction is the subject of the next subsection.
 Because $\mathbf{M}$ is block-lower-triangular, the eigenvectors of the two
 eigenvalue families are constructed as follows.
 
+This construction is an instance of block diagonalization.  Suppose
+$\mathbf{M}_{11}$ and $\mathbf{M}_{22}$ are diagonalizable and their spectra do
+not intersect.  Seek a similarity transformation
+\begin{equation}
+\mathbf{X}=\begin{bmatrix}I&0\\Y&I\end{bmatrix}
+\end{equation}
+that removes the lower-left block.  Direct multiplication gives
+\begin{equation}
+\mathbf{X}^{-1}\mathbf{M}\mathbf{X}
+=\begin{bmatrix}
+\mathbf{M}_{11}&0\\
+\mathbf{M}_{21}+\mathbf{M}_{22}Y-Y\mathbf{M}_{11}&\mathbf{M}_{22}
+\end{bmatrix}.
+\end{equation}
+Thus $Y$ must solve the Sylvester equation
+\begin{equation}
+\mathbf{M}_{22}Y-Y\mathbf{M}_{11}=-\mathbf{M}_{21}.
+\label{eq:sylvester}
+\end{equation}
+The spectral decompositions
+$\mathbf{M}_{11}=\Ph_A\Lambda_A\Ph_A^{-1}$ and
+$\mathbf{M}_{22}=\Ph_C\Lambda_C\Ph_C^{-1}$ convert
+\eqref{eq:sylvester} into
+\begin{equation}
+\Lambda_C Z-Z\Lambda_A=-\Ph_C^{-1}\mathbf{M}_{21}\Ph_A,
+\qquad Z=\Ph_C^{-1}Y\Ph_A.
+\label{eq:sylvester-diagonal}
+\end{equation}
+Since the two diagonal matrices act by row and column scaling,
+\begin{equation}
+Z_{ij}=-\frac{(\Ph_C^{-1}\mathbf{M}_{21}\Ph_A)_{ij}}
+{\lambda_{C,i}-\lambda_{A,j}}.
+\label{eq:sylvester-entrywise}
+\end{equation}
+This explains both the reconstruction formula and its failure mode: when an
+$A$ and $C$ eigenvalue approach one another, the Sylvester operator becomes
+ill-conditioned and the full $2n$ eigensolve is the appropriate fallback.
+
 \emph{Columns for $\lambda_{A,j}=\mathrm{eig}_j(\mathbf{M}_{11})$.}
 Let $\mathbf{M}_{11}=\Ph_A\Lambda_A\Ph_A^{-1}$ with columns
 $\Ph_A=[\mathbf{a}_1,\dots,\mathbf{a}_n]$ and
@@ -740,11 +902,14 @@ Collecting both families gives the block-lower-triangular modal matrix
 \mathbf{D}_{ij}=\lambda_{C,i}-\lambda_{A,j},
 \label{eq:phiblt}
 \end{equation}
-where $\oslash$ denotes element-wise (Hadamard) division; the $i$-th row of
-$\big(\Ph_C^{-1}\mathbf{M}_{21}\Ph_A\big)\oslash\mathbf{D}$ is
-$\big(\Ph_C^{-1}\mathbf{M}_{21}\Ph_A\big)_{ij}/D_{ij}$, which is exactly
-$\big(\Ph_C^{-1}\mathbf{M}_{21}\mathbf{a}_j\big)_i/(\lambda_{C,i}-\lambda_{A,j})$,
-matching \eqref{eq:vrec} column by column. The reconstruction \eqref{eq:phiblt}
+where $\oslash$ denotes element-wise division.  If
+$\mathbf{X}=\Ph_C^{-1}\mathbf{M}_{21}\Ph_A$, then the $(i,j)$ entry of the
+Hadamard quotient is
+\begin{equation*}
+(\mathbf{X}\oslash\mathbf{D})_{ij}
+=\frac{X_{ij}}{\lambda_{C,i}-\lambda_{A,j}},
+\end{equation*}
+which agrees column by column with \eqref{eq:vrec}. The reconstruction \eqref{eq:phiblt}
 costs two $n\times n$ eigendecompositions, one $n\times n$ solve
 ($\Ph_C^{-1}\mathbf{M}_{21}\Ph_A$), and two $O(n^3)$ products, versus one
 $2n\times2n$ eigendecomposition; the results are numerically identical to the
@@ -754,7 +919,7 @@ the resolvent \eqref{eq:vrec} is singular and the code falls back to the full
 $2n\times2n$ solve; the detection is exact (off-diagonal-block norm test), so
 the result is never silently wrong.
 
-\section{TE/TM-decoupled $S$-matrix path}
+\section{Polarization-decoupled scattering at normal incidence}
 \label{sec:te}
 
 At normal incidence with block-diagonal $\kp,\Ph,\fq$ (Section~\ref{sec:bd}),
@@ -802,8 +967,9 @@ $|\theta|\le\pi f$, and its eigenvalues obey the two-interval concentration law
 \end{equation}
 For the EUV example of Section~\ref{sec:results}
 ($f=500/3500\approx0.143$, $n=253$) this gives a numerical rank of $\approx52$
-at $\tau=10^{-14}$, i.e.\ $\mathbf{S}$ is $5\times$ rank-deficient; a rank-$52$
-reconstruction reproduces $\mathbf{S}$ to $\sim1.5\times10^{-15}$. Two
+at $\tau=10^{-14}$, i.e.\ its numerical rank is approximately five times
+smaller than its dimension; a rank-$52$ reconstruction reproduces
+$\mathbf{S}$ to $\sim1.5\times10^{-15}$. Two
 consequences follow.
 
 First, \emph{the analytic coefficients} \eqref{eq:epshat} replace the grid
@@ -813,7 +979,8 @@ to $f=0.1420$ against the exact $f=0.142857$). For smooth profiles (Gaussian,
 Lorentzian) the coefficients decay exponentially and the harmonic count
 required for a fixed accuracy drops correspondingly.
 
-Second, \emph{both patterned-layer eigenproblems become diagonal-plus-low-rank}.
+Second, \emph{both patterned-layer eigenproblems admit
+diagonal-plus-low-rank representations}.
 Let $\mathbf{S}=U\Sigma U^{\top}$ be the (numerically) rank-$r$
 eigendecomposition, $U\in\CC^{n\times r}$, $\Sigma\in\R^{r\times r}$.
 By the Woodbury identity
@@ -840,15 +1007,15 @@ patterned blocks \eqref{eq:bdblocks} take the form
 \mathbf{M}_{22}=\diag(\beta'_h)+\text{rank-}\le4r\ \text{update},
 \label{eq:dplr}
 \end{equation}
-with $\beta_h=\omega^2\varepsilon_2-\kappa_y^2-k_{x,h}^2$. For lossless media
-both matrices are real symmetric, and a diagonal-plus-low-rank (DPLR)
-eigensolver \cite{golub2013matrix} computes all eigenvalues in
-$O(n\,r+r^3)$ instead of $O(n^3)$: the active subspace is only
-$r$-dimensional, and the bulk eigenvalues are small corrections to the diagonal
-entries. For lossy media the matrices are complex symmetric and the
-secular-equation approach applies with a complex root finder; we report the
-lossless speedup below and leave the complex case as a straightforward
-extension.
+with $\beta_h=\omega^2\varepsilon_2-\kappa_y^2-k_{x,h}^2$.
+Equation~\eqref{eq:dplr} suggests matrix--vector products, subspace iteration,
+or secular-equation methods whose cost depends on the numerical rank $r$.
+However, the matrices in \eqref{eq:bdblocks} are generally non-normal, and the
+existence of a low-rank update alone does not imply an
+$\order(nr+r^3)$ algorithm for their complete spectrum.  We therefore treat
+\eqref{eq:dplr} as an operator-structure observation and do not include it in
+the exact speedup claims below.  A stable reduced-rank eigensolver, especially
+for complex lossy media, is left for future work.
 
 \section{Block-wise post-processing}
 \label{sec:post}
@@ -924,6 +1091,50 @@ formula to $\sim10^{-15}$).
 The reductions above are implemented in a C++17 library using Eigen, FFTW, and
 LAPACK/BLAS. The remaining algorithmic considerations are:
 
+\subsection{Algorithmic workflow}
+\label{sec:workflow}
+
+The implementation follows the mathematical factorization rather than treating
+all layers uniformly.  The workflow is:
+\begin{enumerate}
+\item construct the reciprocal lattice and select the retained harmonic set;
+\item form the convolution matrices only for patterned layers;
+\item classify each patterned modal operator by its measured off-diagonal block
+  norms;
+\item solve the smallest valid eigenproblems and reconstruct the modal basis;
+\item locate the trailing homogeneous suffix and evaluate it by independent
+  $2\times2$ recursions;
+\item compose the remaining patterned prefix with the compact suffix using
+  the overlapping elimination in \eqref{eq:internal-elimination};
+\item reconstruct fields and quadratic observables from the resulting modal
+  amplitudes.
+\end{enumerate}
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[scale=0.78,transform shape,node distance=6mm and 7mm,>=Latex,font=\footnotesize,
+  box/.style={draw,rounded corners,align=center,minimum width=2.7cm,
+  minimum height=0.75cm,fill=blue!8},
+  decision/.style={draw,diamond,aspect=2,align=center,fill=orange!15},
+  line/.style={->,thick}]
+  \node[box] (g) {harmonic set};
+  \node[box,right=of g] (c) {modal operator};
+  \node[decision,right=of c] (d) {block\\structure?};
+  \node[box,above right=of d] (r) {reduced eigensolves};
+  \node[box,below right=of d] (f) {full eigensolve};
+  \node[box,right=19mm of d] (s) {compact suffix};
+  \node[box,right=of s] (o) {assembly};
+  \draw[line] (g)--(c); \draw[line] (c)--(d);
+  \draw[line] (d)--node[above left]{yes}(r);
+  \draw[line] (d)--node[below left]{no}(f);
+  \draw[line] (r)--(s); \draw[line] (f)--(s); \draw[line] (s)--(o);
+\end{tikzpicture}
+\caption{Structure-aware computational workflow.  The branch decision is made
+from algebraic conditions on the discretized operator; if a condition is not
+met, the method falls back to the general formulation.}
+\label{fig:workflow}
+\end{figure}
+
 \begin{itemize}
 \item \emph{Parallel eigenpairs.} The two independent $n\times n$ eigenproblems
   of Sections~\ref{sec:bd}--\ref{sec:blt} are solved concurrently on two
@@ -950,13 +1161,12 @@ LAPACK/BLAS. The remaining algorithmic considerations are:
 
 \subsection{Validation}
 
-Table~\ref{tab:val} compares the solver against the reference implementations
-grcwa~\cite{grcwa} and S4~\cite{liu2014s4}. The S4 golden test
-\cite{liu2014s4} (two-layer hole pattern) is reproduced within the $10^{-3}$
-tolerance of the reference, and the grcwa examples are matched to printed
-precision; the EUV cases agree with grcwa to all printed digits. Per-order
-reflected-field coefficients and real-space fields agree with grcwa to
-$\sim10^{-13}$.
+Table~\ref{tab:val} compares the solver with grcwa~\cite{grcwa} and with values
+used by the S4 regression problem~\cite{liu2014s4}.  The grcwa examples are
+reproduced to the displayed precision.  Fourier coefficients of the reflected
+field and fields reconstructed in real space differ by approximately
+$10^{-13}$ in the tested cases.  The separate S4 values are satisfied within
+the $10^{-3}$ relative tolerance prescribed by that regression test.
 
 \begin{table}[t]
 \centering
@@ -972,7 +1182,7 @@ ex1 square holes & 0.132415, 0.867585 & 0.13241493, 0.86758507 & \checkmark\\
 ex2 two layers & 0.132599, 0.867401 & 0.13259894, 0.86740106 & \checkmark\\
 ex4 hexagonal & 0.164450, 0.835550 & 0.16445004, 0.83554996 & \checkmark\\
 EUV mirror 13.5\,nm $R$ & 0.599171 & 0.599171 & exact\\
-EUV absorber $R$ & 0.578759 & 0.578790 & exact\\
+EUV absorber $R$ & 0.578790 & 0.578790 & $<10^{-6}$\\
 \bottomrule
 \end{tabular}\\
 {\small $^*$ S4 golden value embedded in the test; grcwa itself computes 0.853173 / 0.839654, reproduced exactly by this work.}
@@ -987,14 +1197,25 @@ number of uniform layers at every truncation.
 
 Table~\ref{tab:perf} reports the effect of the per-harmonic uniform suffix
 (Section~\ref{sec:suffixalgo}) on the full-2D EUV absorber
-(vacuum$\,|\,$TaN absorber$\,|\,$Ru cap$\,|\,$40$\times$(Mo/Si)$\,|\,$Si substrate).
+(vacuum \textbar{} TaN absorber \textbar{} Ru cap \textbar{}
+$40\times$(Mo/Si) \textbar{} Si substrate).
 The suffix alone accelerates the $S$-matrix assembly by $3.4$--$3.7\times$ with
 bit-identical reflectivity; the gain grows with $n$ because the suffix cost is
 now linear in $n$ while the reference dense products scale as $(2n)^3$.
 
+The benchmark geometry uses wavelength \(\lambda=\SI{13.5}{\nano\metre}\) and
+the layer sequence vacuum \textbar{} TaN absorber \textbar{} Ru cap
+\textbar{} 40 periods of Mo/Si \textbar{} Si substrate.  Timings correspond to release-mode C++ code linked
+to OpenBLAS and use six BLAS threads.  Each table entry is the best measured
+wall time over repeated runs on the same workstation; it should therefore be
+interpreted as an implementation benchmark rather than a hardware-independent
+constant.  The harmonic count $n$ is the actual count after symmetry-preserving
+truncation, and both columns use the same $n$, material grids, incidence, and
+floating-point precision.
+
 \begin{table}[t]
 \centering
-\caption{Full-2D EUV absorber, $S$-matrix (`rt\_solve`) before/after the
+\caption{Full-2D EUV absorber, $S$-matrix (\texttt{rt\_solve}) before/after the
 per-harmonic uniform suffix (machine under load; $R$ identical in both
 columns).}
 \label{tab:perf}
@@ -1008,12 +1229,14 @@ $n$ & generic & per-harmonic suffix & speedup\\
 \end{tabular}
 \end{table}
 
-On the quasi-1D geometry (the same absorber as a $y$-invariant bar,
-$L_x=3.5\,\mu$m, $n=113$) the combined reductions --- 1D harmonic filter,
-per-harmonic suffix, and TE/TM decoupling --- give an end-to-end speedup of
-$\sim30\times$ over the reference grcwa at identical reflectivity
-$R=0.528927$. The parallel eigenpairs additionally reduce the patterned-layer
-setup by $\sim1.5$--$1.8\times$.
+On the quasi-one-dimensional geometry (the same absorber as a
+$y$-invariant bar, $L_x=\SI{3.5}{\micro\metre}$, $n=113$), the combined
+one-dimensional harmonic selection, per-harmonic suffix, and polarization
+decomposition reduce the end-to-end time by approximately a factor of 30
+relative to grcwa for the tested configuration, at the same reflectivity
+$R=0.528927$.  This comparison includes implementation-language and library
+effects in addition to the algebraic reductions; the isolated full-two-
+dimensional suffix speedups are those reported in Table~\ref{tab:perf}.
 
 \section{Discussion}
 \label{sec:disc}
@@ -1024,25 +1247,29 @@ the model, and the scattering observables are bit-identical to the generic
 implementation. Three caveats bound their applicability.
 
 First, the block-lower-triangular decomposition
-(Section~\ref{sec:blt}) requires the harmonic set to be the 1D row of a
-$y$-invariant grating (constant $\kk_y$). For genuinely 2D patterns at oblique
-incidence, $\mathbf{M}_{12}=\Cmat\diag(\kk_y)\epinv\diag(\kk_x)-
-\diag(\kk_x\kk_y)\neq\mathbf{0}$, and the code falls back to the full
-$2n\times2n$ solve; the detection is numerical (norm test on the off-diagonal
-blocks) so no wrong results are possible.
+(Section~\ref{sec:blt}) requires the harmonic set to be the one-dimensional row
+of a $y$-invariant grating, for which $\kk_y$ is constant.  For a genuinely
+two-dimensional pattern at oblique incidence the upper-right block is
+\begin{equation}
+\mathbf{M}_{12}=\Cmat\diag(\kk_y)\epinv\diag(\kk_x)
+-\diag(\kk_x\kk_y),
+\end{equation}
+which does not generally vanish.  The implementation then uses the full
+$2n\times2n$ problem; the choice is made from the norm of the computed block.
 
-Second, the block-diagonal decomposition
-(Section~\ref{sec:bd}) applies at normal incidence to mirror-symmetric
-patterns. For asymmetric 2D patterns at oblique incidence neither eig
-shortcut applies, and the full $2n\times2n$ \texttt{zgeev} remains --- the
+Second, the block-diagonal decomposition applies to the one-dimensional normal-
+incidence case and to additional patterns only when the computed off-diagonal
+blocks vanish.  For a general two-dimensional pattern neither spectral
+reduction applies, and the full $2n\times2n$ \texttt{zgeev} remains the
 recognized residual bottleneck. A matrix-free Krylov formulation
 (preconditioned by the quasi-1D solves above) is the natural next step for
 very large $n$, but is beyond the scope of this paper.
 
-Third, the low-rank structure of Section~\ref{sec:binary} is fully exploited
-only for lossless profiles (real symmetric DPLR). For lossy materials the
-complex-symmetric secular equation requires a complex root finder; this is a
-straightforward but not yet integrated extension.
+Third, the low-rank representation of Section~\ref{sec:binary} has not been
+used to replace the dense non-Hermitian eigensolver.  Doing so requires a
+stability and conditioning analysis, particularly for lossy materials and
+near-degenerate modes.  It should therefore be regarded as a direction for a
+reduced-order method rather than as part of the present exact algorithm.
 
 Finally, we note that Li's factorization rules \cite{li1996fourier} and the
 normal-vector method \cite{li1997formulation} improve \emph{convergence in
@@ -1054,16 +1281,19 @@ processed at the reduced per-harmonic cost.
 \section{Conclusion}
 \label{sec:conc}
 
-We have shown that the dominant cubic cost of rigorous coupled-wave analysis is
-largely structural. Homogeneous layers decouple per harmonic, making the
-multilayer stack $O(n)$; the patterned-layer eigenproblem splits exactly at
-normal and oblique incidence; and binary gratings carry a low-rank
-permittivity structure. Implemented together, these reductions reproduce the
-reference solvers to machine precision while accelerating a full-2D EUV mask
-stack by $3.5\times$ (multilayer suffix from hours-scale to microseconds) and a
-quasi-1D stack by $\sim30\times$. The remaining $O((2n)^3)$ work is confined to
-the few patterned layers and a single assembly, pointing toward matrix-free
-Krylov methods as the next scaling step.
+We have identified invariant subspaces of the finite-dimensional Maxwell
+operator that remove avoidable dense algebra from Fourier-modal scattering.
+Homogeneous layers form a direct sum over diffraction harmonics, and a
+$y$-invariant patterned layer has an exactly reducible spectrum at both normal
+and conical incidence.  These identities preserve the Fourier discretization
+and its physical observables.  In the tested EUV stack, the homogeneous-suffix
+algorithm reduces scattering time by $3.4$--$3.7$ for full two-dimensional
+truncations; additional one-dimensional reductions produce substantially
+larger gains for line gratings.  The remaining asymptotic cost is the dense
+non-Hermitian modal problem of a genuinely two-dimensional patterned layer and
+the final coupling of that layer to its exterior channels.  Matrix-free
+boundary formulations and structure-preserving iterative eigensolvers are the
+natural next steps.
 
 \printbibliography
 
