@@ -563,6 +563,11 @@ public:
     // ── Initialization (must call before any solve) ──
     void Init_Setup(double Pscale = 1.0, int Gmethod = 0);
 
+    // Change incidence angles; reuses the angle-independent lattice/G-set and
+    // the cached permittivity convolution (avoids Epsilon_fft per angle in a
+    // sweep). Valid for arbitrary oblique incidence.
+    void SetIncidence(double theta, double phi);
+
     // ── Excitation ──
     void MakeExcitationPlanewave(const PlaneWaveExcitation& exc);
 

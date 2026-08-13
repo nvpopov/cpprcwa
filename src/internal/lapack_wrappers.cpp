@@ -111,17 +111,28 @@ void zgeev(int n,
            complex* VR, int ldvr,
            int layer_for_error) {
     if (n == 0) { w.resize(0); return; }
-    // Copy A (zgeev destroys it).
-    std::vector<complex> a_copy(A, A + (size_t)lda * n);
+    // Reusable per-thread buffers: a_copy (n×n) and the zgeev workspace are the
+    // two largest allocations, and the patterned-layer eigenproblem is solved
+    // repeatedly (angle/wavelength sweeps, multiple layers). Reusing them
+    // avoids re-allocating and re-touching pages on every call.
+    static thread_local std::vector<complex> a_buf;
+    static thread_local std::vector<complex> work;
+    static thread_local std::vector<double>  rwork;
+
+    const size_t nmat = (size_t)lda * n;
+    if (a_buf.size() < nmat) a_buf.resize(nmat);
+    std::copy(A, A + nmat, a_buf.begin());
+
     w.resize(n);
-    std::vector<double> rwork(2 * n);
+    if (rwork.size() < (size_t)(2 * n)) rwork.resize(2 * n);
+
     char jobvl = 'N';
     char jobvr = (VR != nullptr) ? 'V' : 'N';
     complex vl_dummy;  // not referenced
     int info = 0;
     int lwork = -1;
     complex wkopt;
-    zgeev_(&jobvl, &jobvr, &n, a_copy.data(), &lda,
+    zgeev_(&jobvl, &jobvr, &n, a_buf.data(), &lda,
            w.data(),
            &vl_dummy, &n,
            (VR != nullptr) ? VR : &vl_dummy,
@@ -129,8 +140,8 @@ void zgeev(int n,
            &wkopt, &lwork, rwork.data(), &info);
     if (info != 0) throw error::LapackError("zgeev(query)", "zgeev", info);
     lwork = static_cast<int>(wkopt.real());
-    std::vector<complex> work(lwork);
-    zgeev_(&jobvl, &jobvr, &n, a_copy.data(), &lda,
+    if ((int)work.size() < lwork) work.resize(lwork);
+    zgeev_(&jobvl, &jobvr, &n, a_buf.data(), &lda,
            w.data(),
            &vl_dummy, &n,
            (VR != nullptr) ? VR : &vl_dummy,

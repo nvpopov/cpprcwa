@@ -132,6 +132,9 @@ NB_MODULE(cpprcwa, m) {
         .def("Init_Setup", &RCWA::Init_Setup,
              nb::arg("Pscale") = 1.0, nb::arg("Gmethod") = 0)
 
+        .def("SetIncidence", &RCWA::SetIncidence,
+             nb::arg("theta"), nb::arg("phi"))
+
         .def("MakeExcitationPlanewave",
              [](RCWA& self, double p_amp, double p_phase, double s_amp,
                 double s_phase, int order, const std::string& direction) {

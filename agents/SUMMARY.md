@@ -274,6 +274,19 @@ their matrices. Periodic stacks therefore keep ~nDistinct full matrices
 instead of one copy per layer (~20× less persistent memory; private accessors
 `kp(li)`/`q(li)`/`ph(li)` dereference for the hot paths).
 
+**`SetIncidence(theta, phi)`** (Aug 2026) — change the incidence angles on an
+already-initialized solver and re-run ONLY the angle-dependent setup
+(`kx/ky`, `normalization_`, uniform `kp/q`, patterned `kp/q/phi`). The
+reciprocal lattice, harmonic set `G`, and the permittivity convolution
+(`patterned_epinv_`/`ep2_`) are **angle-independent** and are reused, so an
+`(θ, φ)` sweep skips the FFT + nG×nG inverse per angle. Requires
+`GridLayer_geteps` to have run (it caches the permittivity). The excitation is
+not touched — call `MakeExcitationPlanewave` again after. This is valid for
+**arbitrary oblique incidence** (no symmetry is assumed): for a genuinely 2D
+pattern the 2nG×2nG `zgeev` is irreducible per angle, so the win is the
+angle-independent overhead. `scripts/bench_angle_sweep.py` measures the
+sweep speedup and verifies `R` is bit-identical to rebuilding a fresh solver.
+
 **`MakeExcitationPlanewave(exc)`**
 Projects the `(p, s)` amplitudes onto the `(x, y)` Fourier-amplitude basis
 (mirrors `rcwa.py:125-153`):
@@ -769,6 +782,7 @@ uniform suffix (§7.7.9), which needs no periodicity.
 - **`obj` class** mirrors `grcwa.obj` 1:1: constructor
   `(nG, L1, L2, freq, theta, phi, verbose=1, quasi1d=False)` (L1/L2 accept
   Python lists), `Add_LayerUniform/Grid/Fourier`, `Init_Setup`,
+  `SetIncidence(theta, phi)`,
   `GridLayer_geteps` (isotropic; anisotropic → `NotImplementedError`),
   `MakeExcitationPlanewave`, `RT_Solve`, `GetAmplitudes(_noTranslate)`,
   `Solve_FieldFourier/OnGrid`,

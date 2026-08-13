@@ -4,6 +4,7 @@
 #include <cpprcwa/errors.h>
 #include <cmath>
 #include <cstdlib>
+#include <memory>
 #include <vector>
 
 using namespace cpprcwa;
@@ -175,6 +176,48 @@ TEST_CASE("RCWA selective fields (forward/backward)", "[rcwa][fields]") {
     CHECK((gf.ey + gb.ey).isApprox(gfull.ey, 1e-10));
     CHECK((gf.ez + gb.ez).isApprox(gfull.ez, 1e-10));
     CHECK((gf.hx + gb.hx).isApprox(gfull.hx, 1e-10));
+}
+
+// SetIncidence: changing (theta, phi) on an initialized solver reproduces a
+// freshly-built solver at the same incidence (angle-independent data reused).
+TEST_CASE("RCWA SetIncidence matches a fresh solver", "[rcwa][sweep]") {
+    const int Nx = 100, Ny = 100;
+    auto epgrid = make_circle_epsgrid(Nx, Ny, 0.4, complex(12.0, 0.0));
+
+    auto build = [&](double theta, double phi) {
+        RCWAConfig cfg;
+        cfg.nG = 101;
+        cfg.L1 = Eigen::Vector2d(0.1, 0.0);
+        cfg.L2 = Eigen::Vector2d(0.0, 0.1);
+        cfg.freq = complex(1.0, 0.0);
+        cfg.theta = theta;
+        cfg.phi = phi;
+        auto solver = std::make_unique<RCWA>(cfg);
+        solver->Add_LayerUniform(1.0, complex(1.0, 0.0));
+        solver->Add_LayerGrid(0.2, Nx, Ny);
+        solver->Add_LayerUniform(1.0, complex(1.0, 0.0));
+        solver->Init_Setup();
+        solver->GridLayer_geteps(epgrid);
+        return solver;
+    };
+
+    auto solver = build(M_PI / 18, M_PI / 9);   // theta=10deg, phi=20deg
+    for (auto [th, ph] : {std::pair{M_PI / 6, M_PI / 4},     // 30, 45
+                          std::pair{M_PI / 4, 0.0},          // 45, 0
+                          std::pair{0.0, 0.0},               // normal
+                          std::pair{M_PI / 3, M_PI / 3}}) {  // 60, 60
+        PlaneWaveExcitation exc; exc.p_amp = 1.0;
+        solver->SetIncidence(th, ph);
+        solver->MakeExcitationPlanewave(exc);
+        RTResult r_new = solver->RT_Solve();
+
+        auto fresh = build(th, ph);
+        fresh->MakeExcitationPlanewave(exc);
+        RTResult r_ref = fresh->RT_Solve();
+
+        CHECK(r_new.R == Approx(r_ref.R).epsilon(1e-12));
+        CHECK(r_new.T == Approx(r_ref.T).epsilon(1e-12));
+    }
 }
 
 // Energy conservation: R+T == cos(theta) for lossless uniform stack at oblique incidence.

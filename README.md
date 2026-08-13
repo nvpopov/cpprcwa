@@ -149,6 +149,14 @@ match the original to machine precision. Anisotropic `GridLayer_geteps` and
   general 2D path at oblique incidence (nG=400).
 - Measured on the EUV absorber (nG=97): ~2× faster than the naive build, and
   ≈5× faster than grcwa overall, with machine-precision field agreement.
+- **Angle / wavelength sweeps**: `SetIncidence(theta, phi)` changes the
+  incidence on an already-built solver and re-runs only the angle-dependent
+  part (kx/ky + layer eigensystems), reusing the angle-independent harmonic set
+  and permittivity convolution matrices. Use it instead of rebuilding the
+  object per angle (see `scripts/bench_angle_sweep.py`). The patterned-layer
+  `zgeev` itself is genuinely angle-dependent and irreducible for an arbitrary
+  2D pattern, so sweep the remaining angles in parallel
+  (`ProcessPoolExecutor`).
 
 ## Quick start
 

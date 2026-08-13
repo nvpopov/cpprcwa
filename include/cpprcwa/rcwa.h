@@ -32,6 +32,15 @@ public:
     // Pscale: lattice period scale (multiplies period). Gmethod: 0=circ, 1=para.
     void Init_Setup(double Pscale = 1.0, int Gmethod = 0);
 
+    // Change the incidence angles on an already-initialized solver and re-run
+    // ONLY the angle-dependent setup (kx/ky, uniform kp/q, patterned kp/q/phi).
+    // The reciprocal lattice, the harmonic set G, and the permittivity
+    // convolution matrices (patterned_epinv_/ep2_) — all angle-independent — are
+    // reused, so an (θ, φ) sweep avoids the FFT + nG×nG inverse per angle.
+    // Requires GridLayer_geteps to have been called (to cache the permittivity).
+    // The excitation is NOT changed: call MakeExcitationPlanewave afterwards.
+    void SetIncidence(double theta, double phi);
+
     // ── Excitation ──
     void MakeExcitationPlanewave(const PlaneWaveExcitation& exc);
 
@@ -233,6 +242,11 @@ private:
     SMatrixCache smatrix_cache_;
 
     // ── Internal helpers ──
+    // Recompute the angle-dependent part of the setup (kx/ky, uniform kp/q,
+    // normalization) from the current theta_/phi_. Called by Init_Setup after
+    // the lattice/G-set are built, and by SetIncidence.
+    void SetupIncidence();
+
     void MakeKPMatrix_uniform(complex omega, const ComplexVector& kx, const ComplexVector& ky,
                               complex eps, ComplexMatrix& kp);
     void MakeKPMatrix_patterned(complex omega, const ComplexVector& kx, const ComplexVector& ky,

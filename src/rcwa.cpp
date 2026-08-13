@@ -122,6 +122,12 @@ void RCWA::Init_Setup(double Pscale, int Gmethod) {
         nG_ = keep;
     }
 
+    SetupIncidence();
+
+    if (report_memory_) PrintMemoryReport();
+}
+
+void RCWA::SetupIncidence() {
     // kx0, ky0 from layer-0 epsilon
     complex eps0 = uniform_eps_.front();
     complex kx0 = omega_ * std::sin(theta_) * std::cos(phi_) * std::sqrt(eps0);
@@ -139,8 +145,7 @@ void RCWA::Init_Setup(double Pscale, int Gmethod) {
     // Per-layer kp/q/phi. Uniform layers SHARE storage across identical eps
     // values (they depend only on eps + the global kx/ky/omega) and share one
     // Identity phi, so periodic stacks (Mo/Si EUV multilayers) do not hold a
-    // full (2nG)² copy per layer. Patterned layers are filled in
-    // GridLayer_geteps().
+    // full (2nG)² copy per layer. Patterned layers are filled separately.
     int nLayers = Layer_N();
     kp_list_.assign(nLayers, nullptr);
     q_list_.assign(nLayers, nullptr);
@@ -182,8 +187,35 @@ void RCWA::Init_Setup(double Pscale, int Gmethod) {
         phi_list_[li] = I_shared;
         ++uniform_idx;
     }
+}
 
-    if (report_memory_) PrintMemoryReport();
+void RCWA::SetIncidence(double theta, double phi) {
+    if (theta_ == theta && phi_ == phi) return;
+    theta_ = theta;
+    phi_ = phi;
+    smatrix_cache_ = SMatrixCache{};      // S-matrix depends on incidence
+    uniform_pair_cache_.clear();          // interface T matrices depend on kp
+
+    SetupIncidence();                     // kx/ky + uniform kp/q/phi
+
+    // Recompute the patterned layers' kp/q/phi from the CACHED permittivity
+    // convolution (angle-independent). Requires GridLayer_geteps to have run.
+    int grid_idx = 0;
+    for (int li = 0; li < Layer_N(); ++li) {
+        if (layer_types_[li] != LayerType::Grid) continue;
+        if (grid_idx >= patterned_count_) break;
+        auto kp  = std::make_shared<ComplexMatrix>();
+        auto q   = std::make_shared<ComplexVector>();
+        auto ph  = std::make_shared<ComplexMatrix>();
+        MakeKPMatrix_patterned(omega_, kx_, ky_,
+                               patterned_epinv_[grid_idx], patterned_ep2_[grid_idx], *kp);
+        SolveLayerEigensystem_patterned(omega_, kx_, ky_, *kp, patterned_ep2_[grid_idx],
+                                        *q, *ph);
+        kp_list_[li] = kp;
+        q_list_[li]  = q;
+        phi_list_[li] = ph;
+        ++grid_idx;
+    }
 }
 
 void RCWA::PrintMemoryReport() const {    const int64_t cplx = static_cast<int64_t>(sizeof(complex));      // 16
