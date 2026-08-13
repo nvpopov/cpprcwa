@@ -337,6 +337,12 @@ struct RTResult {
     ComplexVector T_per_order;
 };
 
+// Field contribution selection for the "Selective" field routines.
+struct FieldSelection {
+    bool include_forward  = true;        // forward-propagating (transmitted)
+    bool include_backward = true;        // backward-propagating (reflected)
+};
+
 } // namespace cpprcwa
 ```
 
@@ -584,6 +590,23 @@ public:
     std::vector<FieldGrid>
     Solve_FieldOnGrid(int which_layer, const std::vector<double>& z_offsets,
                       std::optional<std::array<int,2>> Nxy = std::nullopt);
+
+    // Selective variants (include_forward = transmitted / include_backward =
+    // reflected, both default true; default == full field).
+    std::vector<FieldFourier>
+    Solve_FieldFourierSelective(int which_layer, const std::vector<double>& z_offsets,
+                                const FieldSelection& sel = {});
+    std::vector<FieldFourier>
+    Solve_FieldFourierSelective(int which_layer, double z_offset,
+                                const FieldSelection& sel = {});
+    std::vector<FieldGrid>
+    Solve_FieldOnGridSelective(int which_layer, const std::vector<double>& z_offsets,
+                               const FieldSelection& sel = {},
+                               std::optional<std::array<int,2>> Nxy = std::nullopt);
+    std::vector<FieldGrid>
+    Solve_FieldOnGridSelective(int which_layer, double z_offset,
+                               const FieldSelection& sel = {},
+                               std::optional<std::array<int,2>> Nxy = std::nullopt);
 
     ComplexMatrix Return_eps(int which_layer, int Nx, int Ny,
                              const std::string& component); // 'xx','xy','yx','yy','zz'

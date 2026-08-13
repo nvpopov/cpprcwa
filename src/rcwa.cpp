@@ -1268,9 +1268,13 @@ RCWA::Solve_FieldOnGrid(int which_layer, const std::vector<double>& z_offsets,
     if (Nxy) {
         Nx = (*Nxy)[0];
         Ny = (*Nxy)[1];
-    } else {
+    } else if (layer_types_[which_layer] == LayerType::Grid) {
         Nx = grid_Nxy_[grid_idx_[which_layer]].first;
         Ny = grid_Nxy_[grid_idx_[which_layer]].second;
+    } else {
+        throw error::ConfigError(
+            "Solve_FieldOnGrid: uniform layer " + std::to_string(which_layer) +
+            " has no intrinsic grid; pass an explicit Nxy=[Nx,Ny]");
     }
     double dN = 1.0 / ((double)Nx * Ny);
     auto fehl = Solve_FieldFourier(which_layer, z_offsets);
@@ -1294,6 +1298,72 @@ std::vector<FieldGrid>
 RCWA::Solve_FieldOnGrid(int which_layer, double z_offset,
                         std::optional<std::array<int,2>> Nxy) {
     return Solve_FieldOnGrid(which_layer, std::vector<double>{z_offset}, Nxy);
+}
+
+std::vector<FieldFourier>
+RCWA::Solve_FieldFourierSelective(int which_layer, const std::vector<double>& z_offsets,
+                                  const FieldSelection& sel) {
+    auto [ai0, bi0] = GetAmplitudes_noTranslate(which_layer);
+    const ComplexVector& qloc = q(which_layer);
+    double thickness = thickness_[which_layer];
+
+    std::vector<FieldFourier> out;
+    out.reserve(z_offsets.size());
+    for (double zoff : z_offsets) {
+        ComplexVector aim, bim;
+        TranslateAmplitudes(qloc, thickness, zoff, ai0, bi0, aim, bim);
+        if (!sel.include_forward)  aim.setZero(2 * nG_);
+        if (!sel.include_backward) bim.setZero(2 * nG_);
+        out.push_back(field_from_amplitudes(which_layer, aim, bim));
+    }
+    return out;
+}
+
+std::vector<FieldFourier>
+RCWA::Solve_FieldFourierSelective(int which_layer, double z_offset,
+                                  const FieldSelection& sel) {
+    return Solve_FieldFourierSelective(which_layer, std::vector<double>{z_offset}, sel);
+}
+
+std::vector<FieldGrid>
+RCWA::Solve_FieldOnGridSelective(int which_layer, const std::vector<double>& z_offsets,
+                                 const FieldSelection& sel,
+                                 std::optional<std::array<int,2>> Nxy) {
+    int Nx, Ny;
+    if (Nxy) {
+        Nx = (*Nxy)[0];
+        Ny = (*Nxy)[1];
+    } else if (layer_types_[which_layer] == LayerType::Grid) {
+        Nx = grid_Nxy_[grid_idx_[which_layer]].first;
+        Ny = grid_Nxy_[grid_idx_[which_layer]].second;
+    } else {
+        throw error::ConfigError(
+            "Solve_FieldOnGridSelective: uniform layer " + std::to_string(which_layer) +
+            " has no intrinsic grid; pass an explicit Nxy=[Nx,Ny]");
+    }
+    double dN = 1.0 / ((double)Nx * Ny);
+    auto fehl = Solve_FieldFourierSelective(which_layer, z_offsets, sel);
+
+    std::vector<FieldGrid> out;
+    out.reserve(fehl.size());
+    for (const auto& feh : fehl) {
+        FieldGrid g;
+        g.ex = get_ifft(dN, Nx, Ny, feh.ex, G_);
+        g.ey = get_ifft(dN, Nx, Ny, feh.ey, G_);
+        g.ez = get_ifft(dN, Nx, Ny, feh.ez, G_);
+        g.hx = get_ifft(dN, Nx, Ny, feh.hx, G_);
+        g.hy = get_ifft(dN, Nx, Ny, feh.hy, G_);
+        g.hz = get_ifft(dN, Nx, Ny, feh.hz, G_);
+        out.push_back(std::move(g));
+    }
+    return out;
+}
+
+std::vector<FieldGrid>
+RCWA::Solve_FieldOnGridSelective(int which_layer, double z_offset,
+                                 const FieldSelection& sel,
+                                 std::optional<std::array<int,2>> Nxy) {
+    return Solve_FieldOnGridSelective(which_layer, std::vector<double>{z_offset}, sel, Nxy);
 }
 
 FieldFourier RCWA::ForwardPropagatedFieldFourier(int which_layer, double z_offset) {

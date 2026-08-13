@@ -63,6 +63,26 @@ public:
     Solve_FieldOnGrid(int which_layer, double z_offset,
                       std::optional<std::array<int,2>> Nxy = std::nullopt);
 
+    // Selective variants: reconstruct only the requested field contributions.
+    // `sel.include_forward` selects the forward-propagating (transmitted)
+    // amplitudes ai; `sel.include_backward` selects the backward-propagating
+    // (reflected) amplitudes bi. Default (both) equals the full field.
+    std::vector<FieldFourier>
+    Solve_FieldFourierSelective(int which_layer, const std::vector<double>& z_offsets,
+                                const FieldSelection& sel = {});
+    std::vector<FieldFourier>
+    Solve_FieldFourierSelective(int which_layer, double z_offset,
+                                const FieldSelection& sel = {});
+
+    std::vector<FieldGrid>
+    Solve_FieldOnGridSelective(int which_layer, const std::vector<double>& z_offsets,
+                               const FieldSelection& sel = {},
+                               std::optional<std::array<int,2>> Nxy = std::nullopt);
+    std::vector<FieldGrid>
+    Solve_FieldOnGridSelective(int which_layer, double z_offset,
+                               const FieldSelection& sel = {},
+                               std::optional<std::array<int,2>> Nxy = std::nullopt);
+
     GridMatrix Return_eps(int which_layer, int Nx, int Ny,
                           const std::string& component);
 

@@ -212,6 +212,42 @@ NB_MODULE(cpprcwa, m) {
              },
              nb::arg("which_layer"), nb::arg("z_offset"), nb::arg("Nxy") = nb::none())
 
+        .def("Solve_FieldFourierSelective",
+             [](RCWA& self, int which_layer, const nb::object& z_offset,
+                bool include_forward, bool include_backward) {
+                 FieldSelection sel;
+                 sel.include_forward = include_forward;
+                 sel.include_backward = include_backward;
+                 auto fields = self.Solve_FieldFourierSelective(
+                     which_layer, to_zoffsets(z_offset), sel);
+                 nb::list out;
+                 for (const auto& f : fields) out.append(field_fourier_to_list(f));
+                 return nb::object(out);
+             },
+             nb::arg("which_layer"), nb::arg("z_offset"),
+             nb::arg("include_forward") = true,
+             nb::arg("include_backward") = true)
+
+        .def("Solve_FieldOnGridSelective",
+             [](RCWA& self, int which_layer, const nb::object& z_offset,
+                bool include_forward, bool include_backward, const nb::object& Nxy) {
+                 FieldSelection sel;
+                 sel.include_forward = include_forward;
+                 sel.include_backward = include_backward;
+                 std::optional<std::array<int, 2>> nxy;
+                 if (!Nxy.is_none())
+                     nxy = nb::cast<std::array<int, 2>>(Nxy);
+                 auto fields = self.Solve_FieldOnGridSelective(
+                     which_layer, to_zoffsets(z_offset), sel, nxy);
+                 nb::list out;
+                 for (const auto& f : fields) out.append(field_grid_to_list(f));
+                 return nb::object(out);
+             },
+             nb::arg("which_layer"), nb::arg("z_offset"),
+             nb::arg("include_forward") = true,
+             nb::arg("include_backward") = true,
+             nb::arg("Nxy") = nb::none())
+
         .def("Return_eps", &RCWA::Return_eps,
              nb::arg("which_layer"), nb::arg("Nx"), nb::arg("Ny"),
              nb::arg("component") = "xx")

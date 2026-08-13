@@ -118,6 +118,65 @@ TEST_CASE("RCWA fields and post-processing (S4 pattern)", "[rcwa][fields]") {
     CHECK(stress[2] < 0.0);
 }
 
+// Selective field reconstruction: forward + backward == full, and the isolated
+// contributions match the Forward/BackwardPropagatedFieldFourier helpers.
+TEST_CASE("RCWA selective fields (forward/backward)", "[rcwa][fields]") {
+    const int Nx = 100, Ny = 100;
+    auto epgrid = make_circle_epsgrid(Nx, Ny, 0.4, complex(12.0, 0.0));
+
+    RCWAConfig cfg;
+    cfg.nG = 101;
+    cfg.L1 = Eigen::Vector2d(0.1, 0.0);
+    cfg.L2 = Eigen::Vector2d(0.0, 0.1);
+    cfg.freq = complex(1.0, 0.0);
+    cfg.theta = M_PI / 18;
+    cfg.phi   = M_PI / 9;
+
+    RCWA solver(cfg);
+    solver.Add_LayerUniform(1.0, complex(1.0, 0.0));
+    solver.Add_LayerGrid(0.2, Nx, Ny);
+    solver.Add_LayerUniform(1.0, complex(1.0, 0.0));
+    solver.Init_Setup();
+    solver.GridLayer_geteps(epgrid);
+    PlaneWaveExcitation exc; exc.p_amp = 1.0; exc.s_amp = 0.0;
+    solver.MakeExcitationPlanewave(exc);
+
+    FieldSelection fwd; fwd.include_forward = true;  fwd.include_backward = false;
+    FieldSelection bwd; bwd.include_forward = false; bwd.include_backward = true;
+
+    auto full = solver.Solve_FieldFourier(1, 0.0)[0];
+    auto f = solver.Solve_FieldFourierSelective(1, 0.0, fwd)[0];
+    auto b = solver.Solve_FieldFourierSelective(1, 0.0, bwd)[0];
+
+    CHECK((f.ex + b.ex).isApprox(full.ex, 1e-12));
+    CHECK((f.ey + b.ey).isApprox(full.ey, 1e-12));
+    CHECK((f.ez + b.ez).isApprox(full.ez, 1e-12));
+    CHECK((f.hx + b.hx).isApprox(full.hx, 1e-12));
+    CHECK((f.hy + b.hy).isApprox(full.hy, 1e-12));
+    CHECK((f.hz + b.hz).isApprox(full.hz, 1e-12));
+
+    // The isolated contributions equal the dedicated forward/backward helpers.
+    auto ffwd = solver.ForwardPropagatedFieldFourier(1, 0.0);
+    auto fbwd = solver.BackwardPropagatedFieldFourier(1, 0.0);
+    CHECK(f.ex.isApprox(ffwd.ex, 1e-12));
+    CHECK(f.ey.isApprox(ffwd.ey, 1e-12));
+    CHECK(f.ez.isApprox(ffwd.ez, 1e-12));
+    CHECK(f.hx.isApprox(ffwd.hx, 1e-12));
+    CHECK(b.ex.isApprox(fbwd.ex, 1e-12));
+    CHECK(b.ey.isApprox(fbwd.ey, 1e-12));
+    CHECK(b.ez.isApprox(fbwd.ez, 1e-12));
+    CHECK(b.hx.isApprox(fbwd.hx, 1e-12));
+
+    // Grid variant: forward + backward == full.
+    auto gfull = solver.Solve_FieldOnGrid(1, 0.0)[0];
+    auto gf = solver.Solve_FieldOnGridSelective(1, 0.0, fwd)[0];
+    auto gb = solver.Solve_FieldOnGridSelective(1, 0.0, bwd)[0];
+    CHECK((gf.ex + gb.ex).isApprox(gfull.ex, 1e-10));
+    CHECK((gf.ey + gb.ey).isApprox(gfull.ey, 1e-10));
+    CHECK((gf.ez + gb.ez).isApprox(gfull.ez, 1e-10));
+    CHECK((gf.hx + gb.hx).isApprox(gfull.hx, 1e-10));
+}
+
 // Energy conservation: R+T == cos(theta) for lossless uniform stack at oblique incidence.
 TEST_CASE("RCWA energy conservation oblique uniform", "[rcwa]") {
     RCWAConfig cfg;

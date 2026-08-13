@@ -60,7 +60,9 @@ cpprcwa/
     ├── quasi1d_field_fourier.py            # grcwa vs cpprcwa Solve_FieldFourier
     ├── quasi1d_field_grid.py               # grcwa vs cpprcwa Solve_FieldOnGrid
     ├── quasi1d_field_fastpath.py           # ... vs cpprcwa quasi1d=True fast path
-    └── quasi1d_field_fastpath_many_angles.py  # ... swept over a (θ, φ) grid
+    ├── quasi1d_field_fastpath_many_angles.py  # ... swept over a (θ, φ) grid
+    ├── selective_field_example.py          # Solve_FieldFourierSelective / OnGridSelective demo
+    └── field_polarizations_example.py      # Solve_FieldFourier across p/s/linear/circular states
 ```
 
 ---
@@ -114,6 +116,12 @@ struct FieldGrid    { GridMatrix  ex, ey, ez, hx, hy, hz; };     // (Nx, Ny) eac
 struct RTResult {
     double R = 0, T = 0;
     ComplexVector R_per_order, T_per_order;   // populated if byorder=true
+};
+
+// Selects which field contributions to reconstruct ("Selective" routines):
+struct FieldSelection {
+    bool include_forward  = true;   // forward-propagating (transmitted) field
+    bool include_backward = true;   // backward-propagating (reflected) field
 };
 ```
 
@@ -415,12 +423,31 @@ The `fey = −fexy[:nG]` sign is **intentional** (amplitude-vector ordering maps
 `Solve_FieldFourier`, then `get_ifft` each of the six components to an
 `(Nx, Ny)` `GridMatrix`. `Nxy` defaults to the layer's stored grid size.
 
+**`Solve_FieldFourierSelective(which_layer, z_offsets, sel)`** /
+**`Solve_FieldOnGridSelective(which_layer, z_offsets, sel, Nxy)`** — the
+"Selective" variants of the two above. `sel` is a `FieldSelection`
+(`include_forward` / `include_backward`, both default `true`) that selects
+which physical contributions to reconstruct: `include_forward` keeps the
+forward-propagating amplitudes `ai` (transmitted field), `include_backward`
+keeps the backward-propagating amplitudes `bi` (reflected field). Internally
+they translate the amplitudes, zero out whichever of `ai`/`bi` is deselected,
+and call `field_from_amplitudes`, so they are **bit-identical** to the
+dedicated helpers below when only one side is selected, and `forward +
+backward == full` exactly. `Solve_FieldOnGridSelective` additionally does the
+`get_ifft` for each selected field. Both have a single-`z_offset` overload.
+Note: `Solve_FieldOnGrid`/`Solve_FieldOnGridSelective` require an explicit
+`Nxy` for uniform layers (which have no intrinsic grid) — they throw
+`error::ConfigError` otherwise (matches grcwa, where the `id_list` entry for a
+uniform layer has no grid index). A runnable Python example is
+`scripts/selective_field_example.py`.
+
 **`ForwardPropagatedFieldFourier(which_layer, z_offset)`** /
 **`BackwardPropagatedFieldFourier(which_layer, z_offset)`** — field
 contribution from the forward (`ai`) or backward (`bi`) amplitudes alone,
 evaluated in `which_layer` at depth `z_offset` (0 = front interface). For
 layer 0 at z=0, `BackwardPropagatedFieldFourier` is the reflected field in
-air; used to validate every reflected order against grcwa.
+air; used to validate every reflected order against grcwa. Equivalent to
+`Solve_FieldFourierSelective` with the opposite side deselected.
 
 ### 5.6 Post-processing
 
@@ -511,7 +538,11 @@ All validated against grcwa (Python) / S4:
 
 Additional invariants tested: `R+T = cos(θ)` for lossless oblique uniform
 stacks (energy conservation), `nG_out ≤ nG`, degenerate-G symmetry, FFT
-DC-component equality, and `Layer 0 must be uniform`.
+DC-component equality, and `Layer 0 must be uniform`. A
+`RCWA selective fields (forward/backward)` case checks that
+`forward + backward == full` for both Fourier and grid reconstruction, and
+that the isolated contributions equal `ForwardPropagatedFieldFourier` /
+`BackwardPropagatedFieldFourier`.
 
 ### 7.1 EUV multilayer mirror example
 
@@ -740,7 +771,10 @@ uniform suffix (§7.7.9), which needs no periodicity.
   Python lists), `Add_LayerUniform/Grid/Fourier`, `Init_Setup`,
   `GridLayer_geteps` (isotropic; anisotropic → `NotImplementedError`),
   `MakeExcitationPlanewave`, `RT_Solve`, `GetAmplitudes(_noTranslate)`,
-  `Solve_FieldFourier/OnGrid`, `Return_eps`, `Volume_integral`,
+  `Solve_FieldFourier/OnGrid`,
+  `Solve_FieldFourierSelective/OnGridSelective` (with
+  `include_forward` / `include_backward` kwargs, both default `True`),
+  `Return_eps`, `Volume_integral`,
   `Solve_ZStressTensorIntegral`, and read attributes
   `nG, Layer_N, G, kx, ky, q_list, phi_list, kp_list, thickness_list,
   Uniform_ep_list, GridLayer_Nxy_list, Patterned_epinv_list,

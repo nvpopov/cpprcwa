@@ -91,4 +91,16 @@ struct RTResult {
     ComplexVector T_per_order;
 };
 
+// ── Field selection for the "Selective" field routines ──────────────────────
+
+// Which physical contributions to include when reconstructing a field. The
+// total field is the sum of a forward-propagating part (the amplitudes ai,
+// which carry the transmitted/incident wave) and a backward-propagating part
+// (the amplitudes bi, which carry the reflected wave). Passing both true (the
+// default) reproduces Solve_FieldFourier / Solve_FieldOnGrid exactly.
+struct FieldSelection {
+    bool include_forward  = true;   // forward-propagating (transmitted) field
+    bool include_backward = true;   // backward-propagating (reflected) field
+};
+
 } // namespace cpprcwa
