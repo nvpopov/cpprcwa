@@ -58,6 +58,7 @@ cpprcwa/
     ├── compare_euv.py          # EUV mirror/absorber R vs grcwa
     ├── plot_*.py               # Reflected-field plots (cpprcwa vs grcwa)
     ├── quasi1d_field_fourier.py            # grcwa vs cpprcwa Solve_FieldFourier
+    ├── quasi1d_field_grid.py               # grcwa vs cpprcwa Solve_FieldOnGrid
     ├── quasi1d_field_fastpath.py           # ... vs cpprcwa quasi1d=True fast path
     └── quasi1d_field_fastpath_many_angles.py  # ... swept over a (θ, φ) grid
 ```
@@ -767,14 +768,16 @@ uniform suffix (§7.7.9), which needs no periodicity.
   (`python/grcwa/__init__.py`, which re-exported `cpprcwa` as `import grcwa`)
   was deleted; the bindings themselves are retained as the `cpprcwa` module.
 - **Field-comparison tests (Aug 2026):** `scripts/quasi1d_field_fourier.py`,
+  `scripts/quasi1d_field_grid.py`,
   `scripts/quasi1d_field_fastpath.py` and
   `scripts/quasi1d_field_fastpath_many_angles.py` run grcwa and cpprcwa in one
-  process and compare `Solve_FieldFourier` element-wise (harmonics matched by
-  `(kx, ky)`; eigenvector ordering/phase irrelevant since the physical field in
-  the harmonic basis is unique). The fast-path scripts validate `quasi1d=True`
+  process and compare `Solve_FieldFourier`/`Solve_FieldOnGrid` element-wise
+  (Fourier coefficients are matched by `(kx, ky)`; the real-space grids need
+  only the harmonic set, since the physical field is unique — eigenvector
+  ordering/phase is irrelevant). The fast-path scripts validate `quasi1d=True`
   against grcwa's full harmonic set and assert the y≠0 orders are dead modes
-  (field ≤ 1e-14). Worst relative field diff ~1e-13 at nG=61/101, θ∈{0…30}°,
-  φ∈{0…90}°, p- and s-pol.
+  (field ≤ 1e-14). Worst relative field diff ~1e-13 at nG=61/101,
+  θ∈{0…30}°, φ∈{0…90}°, p- and s-pol.
 
 ### 7.6 Memory reporting & reductions (Aug 2026)
 

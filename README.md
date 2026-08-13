@@ -208,15 +208,16 @@ G pairs; the internal eigenvector ordering/phase of the two libraries does
 not matter because the physical field in the harmonic basis is unique).
 
 ```bash
-python3 scripts/quasi1d_field_fourier.py                # general path
+python3 scripts/quasi1d_field_fourier.py                # general path, Fourier
+python3 scripts/quasi1d_field_grid.py                   # general path, real-space grid
 python3 scripts/quasi1d_field_fastpath.py               # cpprcwa quasi1d=True
 python3 scripts/quasi1d_field_fastpath_many_angles.py   # sweep a (θ, φ) grid
 ```
 
-All three exit 0 (PASS) when every field component agrees within the
-tolerance (default 1e-8; measured worst diff ~1e-13). They need the original
-grcwa checkout (repo-adjacent `grcwa_orig/`) and a build of the cpprcwa
-nanobind module.
+All exit 0 (PASS) when every field component agrees within the tolerance
+(default 1e-8; measured worst diff ~1e-13). They need the original grcwa
+checkout (repo-adjacent `grcwa_orig/`) and a build of the cpprcwa nanobind
+module.
 
 ## Layout
 
@@ -232,7 +233,8 @@ examples/         ex1 (square holes), ex2 (two layers), ex4 (hexagonal),
 benchmarks/       timed benchmarks
 scripts/          golden-file generation / comparison helpers,
                   grcwa-vs-cpprcwa field-comparison tests
-                  (quasi1d_field_fourier.py, quasi1d_field_fastpath.py,
+                  (quasi1d_field_fourier.py, quasi1d_field_grid.py,
+                  quasi1d_field_fastpath.py,
                   quasi1d_field_fastpath_many_angles.py)
 ```
 
