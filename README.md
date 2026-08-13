@@ -16,9 +16,8 @@ of scope.
 - Validated against grcwa / S4: reproduces the S4 golden reference
   `T=0.85249901083265` (p-pol) and `T=0.83900479939861` (s-pol) within `1e-3`
   relative tolerance, and matches grcwa's `ex1.py`, `ex2.py`, `ex4.py` exactly.
-- Python bindings (nanobind) expose the grcwa `obj` API as a drop-in
-  replacement — grcwa's own `ex1.py` / `ex2.py` / `ex4.py` run unchanged via
-  `import grcwa` (shim) or `import cpprcwa`, with machine-precision agreement.
+- Python bindings (nanobind) expose the full solver API as `cpprcwa` — an
+  `obj` class mirroring `grcwa.obj` with machine-precision agreement.
 
 ## Requirements
 
@@ -100,15 +99,14 @@ thread count at runtime with `MKL_NUM_THREADS` / `OMP_NUM_THREADS`.
   *slower*: 126 ms → 393 ms at n=266). MKL threads `zgeev` internally and
   benefits from `MKL_NUM_THREADS`.
 
-## Python bindings (grcwa drop-in)
+## Python bindings
 
-When `CPPRCWA_BUILD_PYTHON=ON`, the build produces `cpprcwa.cpython-*.so`
-plus a `grcwa/` shim package in the build directory. Use it in place of
-grcwa:
+When `CPPRCWA_BUILD_PYTHON=ON`, the build produces `cpprcwa.cpython-*.so` in
+the build directory (or as an installable wheel via `pip install .`). Use it
+in place of grcwa:
 
 ```bash
 PYTHONPATH=<build-dir> python3 your_script.py     # import cpprcwa
-PYTHONPATH=<build-dir> python3 grcwa_script.py    # import grcwa (shim)
 ```
 
 The `obj` class mirrors `grcwa.obj` (constructor `(nG, L1, L2, freq, theta,
@@ -117,8 +115,8 @@ phi, verbose=1, quasi1d=False)`, `Add_Layer*`, `Init_Setup`,
 `Solve_FieldFourier/OnGrid`, `Return_eps`, `Volume_integral`,
 `Solve_ZStressTensorIntegral`, and the `G/kx/ky/q_list/...` attributes).
 Module-level `Lattice_*`, `get_fft`, `get_ifft`, `Epsilon_fft` are exported
-too. grcwa's own `ex1.py`, `ex2.py`, `ex4.py` run unchanged and match the
-original to machine precision. Anisotropic `GridLayer_geteps` and
+too. grcwa's own `ex1.py`, `ex2.py`, `ex4.py` (adapted to `import cpprcwa`)
+match the original to machine precision. Anisotropic `GridLayer_geteps` and
 `Add_LayerFourier` are not implemented (raise `NotImplementedError`).
 
 ## Performance notes
@@ -199,6 +197,27 @@ Regenerate reference files from the Python library:
 python3 scripts/generate_golden.py --example s4
 ```
 
+### Field-comparison scripts (grcwa vs cpprcwa, in one process)
+
+The quasi-1D EUV line-grating geometry (TaN bar on the full 40× Mo/Si
+multilayer) is solved by the original grcwa library and by the cpprcwa
+nanobind bindings side by side, and the Fourier-space fields from
+`Solve_FieldFourier` are compared element-wise at several layers and
+z-offsets (harmonics matched by `(kx, ky)`, cross-checked against the integer
+G pairs; the internal eigenvector ordering/phase of the two libraries does
+not matter because the physical field in the harmonic basis is unique).
+
+```bash
+python3 scripts/quasi1d_field_fourier.py                # general path
+python3 scripts/quasi1d_field_fastpath.py               # cpprcwa quasi1d=True
+python3 scripts/quasi1d_field_fastpath_many_angles.py   # sweep a (θ, φ) grid
+```
+
+All three exit 0 (PASS) when every field component agrees within the
+tolerance (default 1e-8; measured worst diff ~1e-13). They need the original
+grcwa checkout (repo-adjacent `grcwa_orig/`) and a build of the cpprcwa
+nanobind module.
+
 ## Layout
 
 ```
@@ -211,7 +230,10 @@ examples/         ex1 (square holes), ex2 (two layers), ex4 (hexagonal),
                   ex_euv_multilayer (Mo/Si mirror), ex_euv_absorber (TaN pattern),
                   ex_quasi1d_absorber (quasi-1D line grating)
 benchmarks/       timed benchmarks
-scripts/          golden-file generation / comparison helpers
+scripts/          golden-file generation / comparison helpers,
+                  grcwa-vs-cpprcwa field-comparison tests
+                  (quasi1d_field_fourier.py, quasi1d_field_fastpath.py,
+                  quasi1d_field_fastpath_many_angles.py)
 ```
 
 ## License

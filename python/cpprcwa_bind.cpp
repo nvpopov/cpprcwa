@@ -51,18 +51,30 @@ bool is_scalar(const nb::handle& o) {
 }
 
 // Build the grcwa-style [[ex,ey,ez],[hx,hy,hz]] list from one FieldFourier.
+// Copies each Eigen vector into an OWNED numpy array: nanobind's Eigen caster
+// creates a zero-copy view by default for a const&, which dangles once the
+// temporary FieldFourier is destroyed (use-after-free — fields read as garbage
+// after the caller allocates). Casting an rvalue Eigen copy forces a deep copy.
+nb::object owned_vec(const Eigen::VectorXcd& v) {
+    return nb::cast(Eigen::VectorXcd(v));
+}
+
+nb::object owned_mat(const Eigen::MatrixXcd& m) {
+    return nb::cast(Eigen::MatrixXcd(m));
+}
+
 nb::object field_fourier_to_list(const FieldFourier& f) {
     nb::list e, h, eh;
-    e.append(f.ex); e.append(f.ey); e.append(f.ez);
-    h.append(f.hx); h.append(f.hy); h.append(f.hz);
+    e.append(owned_vec(f.ex)); e.append(owned_vec(f.ey)); e.append(owned_vec(f.ez));
+    h.append(owned_vec(f.hx)); h.append(owned_vec(f.hy)); h.append(owned_vec(f.hz));
     eh.append(e); eh.append(h);
     return nb::object(eh);
 }
 
 nb::object field_grid_to_list(const FieldGrid& f) {
     nb::list e, h, eh;
-    e.append(f.ex); e.append(f.ey); e.append(f.ez);
-    h.append(f.hx); h.append(f.hy); h.append(f.hz);
+    e.append(owned_mat(f.ex)); e.append(owned_mat(f.ey)); e.append(owned_mat(f.ez));
+    h.append(owned_mat(f.hx)); h.append(owned_mat(f.hy)); h.append(owned_mat(f.hz));
     eh.append(e); eh.append(h);
     return nb::object(eh);
 }
@@ -166,13 +178,13 @@ NB_MODULE(cpprcwa, m) {
         .def("GetAmplitudes_noTranslate",
              [](RCWA& self, int which_layer) {
                  auto [ai, bi] = self.GetAmplitudes_noTranslate(which_layer);
-                 return nb::make_tuple(nb::cast(ai), nb::cast(bi));
+                 return nb::make_tuple(owned_vec(ai), owned_vec(bi));
              },
              nb::arg("which_layer"))
         .def("GetAmplitudes",
              [](RCWA& self, int which_layer, double z_offset) {
                  auto [ai, bi] = self.GetAmplitudes(which_layer, z_offset);
-                 return nb::make_tuple(nb::cast(ai), nb::cast(bi));
+                 return nb::make_tuple(owned_vec(ai), owned_vec(bi));
              },
              nb::arg("which_layer"), nb::arg("z_offset"))
 

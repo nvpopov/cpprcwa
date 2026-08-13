@@ -58,9 +58,9 @@ tolerance and matches grcwa's `ex1.py`/`ex2.py`/`ex4.py` to printed precision.
 | 5 S-matrix solver | ✅ | Redheffer star product; S4 golden R/T reproduced |
 | 6 Field reconstruction | ✅ | `Solve_Field*`, `Return_eps` (matches grcwa to ~1e-12) |
 | 7 Post-processing | ✅ | `Volume_integral`, stress tensor (matches grcwa) |
-| 8 Examples | ✅ | `ex1`/`ex2`/`ex4` ports + golden scripts + EUV multilayer mirror + EUV absorber + reflected-field validation & plotting + quasi-1D line grating |
+| 8 Examples | ✅ | `ex1`/`ex2`/`ex4` ports + golden scripts + EUV multilayer mirror + EUV absorber + reflected-field validation & plotting + quasi-1D line grating + grcwa-vs-cpprcwa `Solve_FieldFourier` comparison scripts (`quasi1d_field_fourier.py`, `quasi1d_field_fastpath.py`, `quasi1d_field_fastpath_many_angles.py`) |
 | 9 GPU | ⛔ | **Descoped** — feasibility spike run (see §Phase 9): no `cusolverDnZgeev` exists, S-matrix matmuls don't accelerate on GPU, only cuFFT helps (~20×, small setup fraction) |
-| 10 Polish | ✅ | README, install target; Python bindings (nanobind, grcwa drop-in) done; OpenMP/pybind11 deferred |
+| 10 Polish | ✅ | README, install target; Python bindings (nanobind) expose the grcwa-compatible `cpprcwa` module; the `grcwa` drop-in shim was removed (Aug 2026); owned-copy fix in the bindings (Eigen→numpy views dangled on temporaries → `owned_vec`/`owned_mat` deep copies); OpenMP/pybind11 deferred |
 
 **Memory work (Aug 2026):**
 - `Volume_integral` rewritten **block-wise** (§10.4): the 4nG×4nG

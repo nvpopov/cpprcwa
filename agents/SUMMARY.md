@@ -49,13 +49,17 @@ cpprcwa/
 │   ├── ex_euv_absorber.cpp     # EUV TaN absorber pattern on top of the mirror
 │   └── ex_quasi1d_absorber.cpp # Quasi-1D line grating (500 nm TaN bar, Lx=3.5 um)
 ├── python/
-│   ├── cpprcwa_bind.cpp       # nanobind bindings (grcwa-compatible obj + helpers)
-│   └── grcwa/__init__.py      # drop-in shim: import grcwa → cpprcwa
+│   └── cpprcwa_bind.cpp       # nanobind bindings (grcwa-compatible obj + helpers)
 ├── benchmarks/
 │   └── bench_full_rt.cpp       # End-to-end RT_Solve timing
 └── scripts/
     ├── generate_golden.py      # Run grcwa, save golden .txt files
-    └── compare_results.py      # Diff C++ scalar vs golden
+    ├── compare_results.py      # Diff C++ scalar vs golden
+    ├── compare_euv.py          # EUV mirror/absorber R vs grcwa
+    ├── plot_*.py               # Reflected-field plots (cpprcwa vs grcwa)
+    ├── quasi1d_field_fourier.py            # grcwa vs cpprcwa Solve_FieldFourier
+    ├── quasi1d_field_fastpath.py           # ... vs cpprcwa quasi1d=True fast path
+    └── quasi1d_field_fastpath_many_angles.py  # ... swept over a (θ, φ) grid
 ```
 
 ---
@@ -725,10 +729,10 @@ the last period's real boundary interface via the exact Redheffer cascade
 (identical to the sequential path to ~4e-15) — superseded by the per-harmonic
 uniform suffix (§7.7.9), which needs no periodicity.
 
-### 7.5 Python bindings (nanobind) — grcwa drop-in
+### 7.5 Python bindings (nanobind) — grcwa-compatible `cpprcwa` module
 
 `CPPRCWA_BUILD_PYTHON=ON` (default) builds a nanobind module
-(`cpprcwa.cpython-*.so`) plus a `grcwa/` shim package in the build directory.
+(`cpprcwa.cpython-*.so`) exposing the grcwa-compatible `obj` API.
 
 - **`obj` class** mirrors `grcwa.obj` 1:1: constructor
   `(nG, L1, L2, freq, theta, phi, verbose=1, quasi1d=False)` (L1/L2 accept
@@ -745,14 +749,32 @@ uniform suffix (§7.7.9), which needs no periodicity.
   `get_fft`, `get_ifft`, `Epsilon_fft`.
 - **Validation**: grcwa's own `ex1.py` (nG=301, R=0.13241493181686462),
   `ex2.py` (oblique, 2 patterned layers, R=0.1325989361682126) and `ex4.py`
-  (hexagonal, R=0.16445003997328628) run unchanged via the shim and match the
+  (hexagonal, R=0.16445003997328628) adapted to `import cpprcwa` match the
   original grcwa to ~1e-13. `quasi1d=True` on `obj` exposes the fast path
   (nG=201→113, R=0.528927) from Python.
 - **Implementation notes**: constructor uses `nb::pointer_and_handle` +
   placement-new (nanobind `init<>` can't convert list→Eigen/numpy and has no
   convert flag for init args); member lambdas take `RCWA&` explicitly;
-  Eigen/matrix returns are passed by value to avoid lifetime issues; the
-  `std::complex<double>` caster requires `<nanobind/stl/complex.h>`.
+  the `std::complex<double>` caster requires `<nanobind/stl/complex.h>`.
+- **Owned-copy fix (Aug 2026):** `Solve_FieldFourier`/`OnGrid` and
+  `GetAmplitudes(_noTranslate)` now return *owned* numpy arrays. nanobind's
+  Eigen caster creates a zero-copy view for a `const&`, which dangled once the
+  temporary `FieldFourier`/vector was destroyed (use-after-free: fields came
+  back as garbage after the caller allocated, e.g. when grcwa ran first in the
+  same process). Helpers `owned_vec`/`owned_mat` cast an rvalue Eigen copy, so
+  nanobind deep-copies the data (backed by a capsule-held `memoryview` base).
+- **Shim removed (Aug 2026):** the `grcwa/` drop-in shim package
+  (`python/grcwa/__init__.py`, which re-exported `cpprcwa` as `import grcwa`)
+  was deleted; the bindings themselves are retained as the `cpprcwa` module.
+- **Field-comparison tests (Aug 2026):** `scripts/quasi1d_field_fourier.py`,
+  `scripts/quasi1d_field_fastpath.py` and
+  `scripts/quasi1d_field_fastpath_many_angles.py` run grcwa and cpprcwa in one
+  process and compare `Solve_FieldFourier` element-wise (harmonics matched by
+  `(kx, ky)`; eigenvector ordering/phase irrelevant since the physical field in
+  the harmonic basis is unique). The fast-path scripts validate `quasi1d=True`
+  against grcwa's full harmonic set and assert the y≠0 orders are dead modes
+  (field ≤ 1e-14). Worst relative field diff ~1e-13 at nG=61/101, θ∈{0…30}°,
+  φ∈{0…90}°, p- and s-pol.
 
 ### 7.6 Memory reporting & reductions (Aug 2026)
 

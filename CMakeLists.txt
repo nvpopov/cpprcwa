@@ -110,12 +110,9 @@ if(CPPRCWA_BUILD_PYTHON)
     set_target_properties(cpprcwa_py PROPERTIES OUTPUT_NAME cpprcwa)
     target_link_libraries(cpprcwa_py PRIVATE cpprcwa::cpprcwa)
     target_include_directories(cpprcwa_py PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-    # `grcwa` drop-in shim package (imports cpprcwa) next to the module.
-    file(COPY python/grcwa DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
     if(SKBUILD)
-        # scikit-build-core wheel layout: module at the wheel root, shim in grcwa/.
+        # scikit-build-core wheel layout: module at the wheel root.
         install(TARGETS cpprcwa_py LIBRARY DESTINATION .)
-        install(FILES python/grcwa/__init__.py DESTINATION grcwa/)
     endif()
 endif()
 

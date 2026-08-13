@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Time grcwa (via the cpprcwa nanobind shim) on the EUV absorber geometry.
+"""Time cpprcwa (nanobind bindings) on the EUV absorber geometry.
 
 Same config as benchmarks/bench_euv_stack.cpp. Reports best-of-N setup and
 rt_solve wall-clock for the specified (nG, quasi1d, theta, phi) combinations.
@@ -12,7 +12,7 @@ import sys
 import time
 
 import numpy as np
-import grcwa
+import cpprcwa as grcwa
 
 N_MO = 0.9226 + 0.0064j
 N_SI = 0.9997 + 0.0018j
@@ -69,7 +69,7 @@ def main():
     if not sizes:
         sizes = [201, 500]
 
-    print(f"grcwa benchmark (quasi1d={quasi1d} theta={theta} phi={phi}, best of {runs})")
+    print(f"cpprcwa benchmark (quasi1d={quasi1d} theta={theta} phi={phi}, best of {runs})")
     print(f"{'nG':>6} {'2nG':>7} {'setup ms':>12} {'rt_solve ms':>12} {'total ms':>12} {'R':>9}")
     for nG in sizes:
         best = (1e300, 1e300)

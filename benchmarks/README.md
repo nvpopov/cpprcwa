@@ -7,7 +7,7 @@ Harnesses in this directory (build with `-DCPPRCWA_BUILD_BENCHMARKS=ON`):
 | `bench_full_rt` | end-to-end `RT_Solve` on a 3-layer hole pattern |
 | `bench_euv_stack` | EUV absorber (500 nm TaN bar, Lx=3.5 µm, 40× Mo/Si) — quasi-1D and full-2D, best-of-N timing |
 | `bench_zgeev` | GPU (`cusolverDnZgeev`) vs CPU (`zgeev`) feasibility spike → **concluded no GPU zgeev exists** (see PLAN.md §Phase 9) |
-| `bench_grcwa.py` | same geometry timed through the grcwa nanobind shim |
+| `bench_grcwa.py` | same geometry timed through the cpprcwa nanobind bindings |
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCPPRCWA_BUILD_BENCHMARKS=ON
